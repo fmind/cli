@@ -19,9 +19,6 @@ def document() -> dict[str, Any]:
             "alternate_name": "Example",
             "job_title": "Software Architect",
             "headline_primary": "Example expertise",
-            "location": "Example City",
-            "country": "EX",
-            "languages": ["fr", "en"],
             "email": "alex@example.test",
             "site_url": "https://example.test",
         },
@@ -69,7 +66,6 @@ def document() -> dict[str, Any]:
         ],
         "specializations": [{"url": "u", "logo": "l", "title": "Containers", "issuer_details": "Past Company"}],
         "thesis": {
-            "degree": "PhD, Example Field",
             "title": "Ground truth",
             "url": "u",
             "institution_details": "Example University",

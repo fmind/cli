@@ -1,0 +1,29 @@
+# Docs: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
+name: Website compatibility
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: website-compatibility
+  cancel-in-progress: false
+jobs:
+  smoke:
+    name: Live API and MCP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install mise system
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache: false
+      - name: Verify live website compatibility
+        run: mise run smoke

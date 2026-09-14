@@ -172,7 +172,9 @@ def test_transport_revalidates_http_caches_and_bounds_reads(monkeypatch: pytest.
         assert request.get_header("Accept") == "text/markdown"
         assert request.get_header("User-agent").startswith("fmind/")
         assert timeout == 15.0
-        return io.BytesIO(b"# Article")
+        response = io.BytesIO(b"# Article")
+        response.headers = {"Content-Length": "9"}
+        return response
 
     monkeypatch.setattr("urllib.request.urlopen", open_url)
     assert api._download("https://example.test/article.md", "text/markdown") == b"# Article"
@@ -202,3 +204,21 @@ def test_transport_errors_are_safe_and_keep_the_cause(monkeypatch: pytest.Monkey
     assert "private" not in str(caught.value)
     if isinstance(error, urllib.error.HTTPError):
         assert "HTTP 503" in str(caught.value)
+
+
+@pytest.mark.parametrize("length", ["20", "invalid"])
+def test_transport_rejects_incomplete_documents(monkeypatch: pytest.MonkeyPatch, length: str) -> None:
+    response = io.BytesIO(b"# Partial")
+    response.headers = {"Content-Length": length}
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: response)
+    with pytest.raises(api.FmindError, match="could not read the website"):
+        api.load_article("example")
+
+
+@pytest.mark.parametrize("control", ["\x1b[2J", "\x1b]52;c;payload\x07", "\x9b2J", "\x00"])
+def test_rejects_terminal_controls(document: dict[str, Any], control: str) -> None:
+    document["metadata"]["name"] = f"Example {control}"
+    with pytest.raises(api.FmindError, match="terminal control characters"):
+        api._parse_profile(json.dumps(document).encode())
+    with pytest.raises(api.FmindError, match="terminal control characters"):
+        api._parse_markdown(f"# Article\n{control}".encode())

@@ -10,7 +10,7 @@ uvx fmind whoami
 
 Every command renders a document the website already publishes — the portfolio at [`/api/profile`](https://www.fmind.dev/api/profile) and, for `fmind read`, the Markdown source of an article at `/articles/<slug>.md`. Those are the same sources behind the site, the Atom feed, `llms.txt` and the MCP server.
 
-This package therefore carries no copy of the portfolio and needs **no release when the website changes**: new articles, a renewed certification or a new engagement appear on the next run.
+This package carries no copy of the portfolio and needs **no release for content updates**: new articles, a renewed certification or a new engagement appear on the next run. Removing or changing fields that the CLI renders can require a client update; the live compatibility workflow detects those breaks.
 
 Every command fetches from the website and asks HTTP caches to revalidate. There is no local cache and no `--refresh` option. An internet connection is required: if the website cannot be read, the command reports an error instead of showing stale information.
 
@@ -32,9 +32,9 @@ Every command fetches from the website and asks HTTP caches to revalidate. There
 | `fmind read <slug> [--raw]`                 | One article, rendered in the terminal             |
 | `fmind hire`                                | What can be booked right now                      |
 
-The command names are the sections of [the website's command bar](https://www.fmind.dev/), spelled the same way: what the page prints, the shell accepts.
+The commands group sections of the website's profile API. Their names stay stable when the website's navigation or visual design changes.
 
-There are three options and they mean the same thing everywhere: `--limit` bounds any listing, `--json` prints the raw section instead of prose, and `--raw` prints an article's Markdown source. Nothing filters through a flag of its own — `--json` and `jq` do that better.
+`--limit` bounds projects, articles, and search results; `--json` prints a command's data instead of prose; `--raw` prints an article's Markdown source. Search also accepts `--tag`. Use `--json` and `jq` for other filtering.
 
 `--json` works before or after the command: both `fmind --json experiences` and `fmind experiences --json` print the raw website section. Global `--color` / `--no-color` and `--version` go before the command. Colour is detected automatically, including `NO_COLOR` and redirected output. Use `fmind --help` or `fmind <command> --help` for options.
 
@@ -124,6 +124,20 @@ mise run all       # format, check, test, build — the gate CI runs
 The pre-commit hook runs checks without changing or staging files; run `mise run format` before committing. The pre-push hook runs the offline tests. CI runs the full gate on the pinned Python and tests Python 3.11–3.13 for compatibility.
 
 A release tag must match the version in `pyproject.toml` (for example, `v0.1.0`). CD runs the same full gate for that tag and checks the live commands before publishing through PyPI Trusted Publishing. The live smoke check is a release check, not a pull-request gate.
+
+### Website compatibility
+
+The **Website compatibility** GitHub Actions workflow runs `mise run smoke` daily at 06:23 UTC, on pushes to `main`, and on manual dispatch. Failed runs use normal GitHub Actions notifications; no issue bot or extra service is needed. The offline CI gate stays independent of website availability.
+
+The same check exercises every portfolio command in text and both JSON option positions, reads the newest article as Markdown, and launches the real MCP stdio bridge. It discovers the remote tools, resources, templates, and prompts; calls every advertised read-only tool; reads resources; and retrieves prompts. The SDK validates tool results against the website's current schemas, and the profile resource is checked against the CLI's rendering contract. API and MCP failures are reported independently. Checks use live data, not snapshots of portfolio facts.
+
+After a website deployment, run `mise run smoke` locally or dispatch the workflow:
+
+```bash
+gh workflow run compatibility.yml --repo fmind/cli
+```
+
+A failure indicates either an outage or a contract change; inspect the failing operation in the run log. Keep `PROFILE_SHAPE` limited to consumed fields and update synthetic fixtures alongside rendering changes. New MCP tools with required inputs may need a sample argument in the smoke check. No release is needed merely to add content or an unused API field.
 
 Commands exit with 0 on success, 1 for website or article-resolution failures, and 2 for invalid CLI usage.
 

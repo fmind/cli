@@ -11,7 +11,7 @@ Thin Python CLI that renders documents published by `www.fmind.dev`. It has no c
 - `mise run format` — Ruff imports/format and dprint.
 - `mise run check` — lockfile, Ruff, ty, workflow lint/audit, secret scan, and dependency audit, in parallel.
 - `mise run test` — offline pytest with branch coverage of at least 85%.
-- `mise run smoke` — network-dependent run of every command against the live site; never a merge gate.
+- `mise run smoke` — live API/article and MCP compatibility checks, run daily, on main pushes, manually, and before release; never a merge gate.
 - `mise run build` — build the wheel and source distribution.
 - `mise run all` — format, check, test, build. The single gate CI runs; hooks run its parts.
 
@@ -49,9 +49,10 @@ Entries are in ASCII order: dotfiles, capitalized files, then lowercase paths.
 - **Untrusted input.** Slugs reach a URL, so they are matched against `SLUG_PATTERN` before use, and responses are size-bounded and shape-checked before rendering. Test fixtures use synthetic facts, not a copy of the portfolio.
 - **Two dependencies.** Typer and Rich for portfolio commands. The optional `mcp` extra owns the official SDK and its typed HTTP/protocol dependencies. Adding another base dependency needs a reason that outweighs the install cost of an easter egg people run once.
 - **Offline tests.** `mise run test` never touches the network; the live check is `mise run smoke`, run before a release.
-- **Options stay few and mean one thing.** `--limit` bounds every listing, `--json` selects the output format, `--raw` prints an article's source, and nothing else. A command never grows a filter of its own: `--json` piped through `jq` narrows a list better and costs no surface.
-- **Command names are the website's.** Each section command is spelled exactly as `www.fmind.dev` prints it in its command bar, and a command that prints a list is plural. Renaming one renames it on both sides, in the same change.
+- **Options stay few and mean one thing.** `--limit` bounds projects, articles, and search; `--json` selects the output format; `--raw` prints an article's source. Search also accepts `--tag`; use `--json` piped through `jq` for other filters.
+- **Stable command names.** Commands group the website's API sections, and list commands are plural. Website navigation and design changes do not require CLI renames.
 - **Output.** `--json` works before or after each portfolio command; JSON is undecorated stdout and takes precedence over `read --raw`. Root colour flags use terminal detection by default.
 - **MCP.** Forward remote tools, resources, and prompts without copying their schemas or content. Stdio stdout is protocol-only. Disable SDK caching, bound remote responses and request duration, and propagate cancellation. Offline protocol tests use synthetic upstream data; `mise run smoke` makes a real subprocess call through the bridge.
+- **Compatibility monitoring.** `.github/workflows/compatibility.yml` reuses `mise run smoke` independently of offline CI. Discover commands and MCP catalogs instead of maintaining content snapshots. Exercise tool calls, resource reads, and prompts, and report API and MCP failures independently. Content additions need no CLI release; removed or changed consumed fields need a tested client update.
 - **Hooks.** Pre-commit runs `mise run check` without writing or staging files; pre-push runs `mise run test`. Run `mise run format` explicitly before committing.
 - **Commits.** Conventional Commits. Releases are `v*` tags matching `pyproject.toml`; CD runs the full gate and the live smoke check before PyPI Trusted Publishing.

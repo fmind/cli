@@ -28,8 +28,10 @@ def console(*, color: bool | None = None) -> Console:
     """Detect terminal colour and NO_COLOR unless explicitly overridden."""
     return Console(
         force_terminal=True if color is True else None,
+        color_system="truecolor" if color is True else "auto",
         no_color=None if color is None else not color,
         highlight=False,
+        markup=False,
     )
 
 
@@ -60,10 +62,7 @@ def banner(doc: dict[str, Any]) -> RenderableType:
 
 
 def whoami(doc: dict[str, Any]) -> RenderableType:
-    """Identity, current mission, availability, and contact.
-
-    The rows are the website's own header record, in the same order.
-    """
+    """Identity, current mission, availability, and contact."""
     meta = doc["metadata"]
     experience = doc.get("experience") or []
     mission = Text("—", style=DIM)
@@ -79,16 +78,12 @@ def whoami(doc: dict[str, Any]) -> RenderableType:
         status.append("● ", style="#00ff41" if open_now else ERR)
         status.append(service["title"], style=HI)
         status.append(f" — {service['badge']}", style=DIM)
-    thesis = doc["thesis"]
-    languages = ", ".join(meta["languages"])
     return _rows(
         [
             ("Name", Text(f"{meta['name']} ({meta['alternate_name']})", style=HI)),
             ("Role", Text(meta["job_title"], style="#74e492")),
             ("Mission", mission),
-            ("Degree", Text(f"{thesis['degree']} — {thesis['institution_details']}", style="#74e492")),
             ("Status", status),
-            ("Location", Text(f"{meta['location']}, {meta['country']} · {languages}", style="#74e492")),
             ("Contact", Text(meta["email"], style=FLAG)),
             ("Website", Text(meta["site_url"], style=FLAG)),
         ]
@@ -155,7 +150,7 @@ def certifications(doc: dict[str, Any]) -> RenderableType:
     specs = Text("\n".join(f"  {s['title']} — {s['issuer_details']}" for s in doc["specializations"]), style=DIM)
     return Group(
         table,
-        Padding(Group(Text(doc["thesis"]["degree"], style=ACCENT), degree), (1, 0, 0, 0)),
+        Padding(degree, (1, 0, 0, 0)),
         Padding(Group(Text("SPECIALIZATIONS", style=DIM), specs), (1, 0, 0, 0)),
     )
 
@@ -199,7 +194,6 @@ def papers(doc: dict[str, Any]) -> RenderableType:
     """The doctorate and the peer-reviewed record behind it."""
     thesis = doc["thesis"]
     head = Group(
-        Text(thesis["degree"], style=ACCENT),
         Text(thesis["title"], style=HI),
         Text(thesis["institution_details"], style="#74e492"),
         Text(thesis["description"], style=DIM),

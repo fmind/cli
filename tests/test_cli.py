@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 import pytest
+from rich.text import Text
 from typer.testing import CliRunner
 
 from fmind import api
@@ -48,17 +49,13 @@ def test_whoami_shows_identity_and_current_mission() -> None:
     assert "Past Company" not in result.output, "only the current engagement belongs in whoami"
 
 
-def test_whoami_reads_the_same_record_the_website_header_prints() -> None:
-    """The header is one record in one order; the CLI must not invent another."""
+def test_whoami_needs_only_current_website_fields() -> None:
     output = runner.invoke(app, ["--no-color", "whoami"], terminal_width=120).output
     rows = [line.split()[0] for line in output.splitlines() if line.strip()]
     fields = [
         row for row in rows if row in {"Name", "Role", "Mission", "Degree", "Status", "Location", "Contact", "Website"}
     ]
-    assert fields == ["Name", "Role", "Mission", "Degree", "Status", "Location", "Contact", "Website"]
-    # The degree and the base of operations are published facts, never local copy.
-    assert "PhD, Example Field — Example University" in output
-    assert "Example City, EX · fr, en" in output
+    assert fields == ["Name", "Role", "Mission", "Status", "Contact", "Website"]
 
 
 def test_skills_renders_the_published_titles(document: dict[str, Any]) -> None:
@@ -233,8 +230,10 @@ def test_unreachable_profile_reports_cleanly(monkeypatch: pytest.MonkeyPatch) ->
 def test_help_exposes_json_and_omits_refresh(command: list[str]) -> None:
     result = runner.invoke(app, [*command, "--help"])
     assert result.exit_code == 0
-    assert "--json" in result.stdout
-    assert "--refresh" not in result.stdout
+    # CI forces Rich colour, which can insert ANSI sequences inside option names.
+    visible = Text.from_ansi(result.stdout).plain
+    assert "--json" in visible
+    assert "--refresh" not in visible
 
 
 def test_json_experiences_are_the_website_section(document: dict[str, Any]) -> None:
@@ -302,10 +301,11 @@ def test_invalid_usage_exits_without_data(command: list[str]) -> None:
     assert result.stdout == ""
 
 
-def test_colour_respects_no_color_and_explicit_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("term", ["xterm-256color", "dumb"])
+def test_colour_respects_no_color_and_explicit_flags(monkeypatch: pytest.MonkeyPatch, term: str) -> None:
     from fmind import render
 
-    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("TERM", term)
     monkeypatch.setenv("NO_COLOR", "1")
     assert render.console().no_color
     assert render.console(color=False).no_color
@@ -318,3 +318,10 @@ def test_colour_respects_no_color_and_explicit_flags(monkeypatch: pytest.MonkeyP
     json_result = runner.invoke(app, ["--color", "experiences", "--json"])
     assert "\x1b[" not in json_result.stdout
     assert json.loads(json_result.stdout)
+
+
+def test_remote_organization_is_literal_text(document: dict[str, Any]) -> None:
+    document["leadership"][0]["organization"] = "[bold]Example[/broken]"
+    result = runner.invoke(app, ["--no-color", "community"], terminal_width=120)
+    assert result.exit_code == 0, result.output
+    assert "[bold]Example[/broken]" in result.stdout

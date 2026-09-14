@@ -20,23 +20,19 @@ MAX_BYTES = 8 * 1024 * 1024
 USER_AGENT = f"fmind/{__version__} (+https://github.com/fmind/cli)"
 # Slugs reach a URL, so only the shape the site actually mints is accepted.
 SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+# Keep tabs and line breaks, but never let website text issue terminal commands.
+CONTROL_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 # Only fields consumed by this CLI are required; new website fields pass through.
 PROFILE_SHAPE = {
-    "metadata": {
-        **dict.fromkeys(
-            ("name", "alternate_name", "job_title", "headline_primary", "location", "country", "email", "site_url"),
-            str,
-        ),
-        "languages": [str],
-    },
+    "metadata": dict.fromkeys(("name", "alternate_name", "job_title", "headline_primary", "email", "site_url"), str),
     "biography": [str],
     "expertise": [{"title": str, "description": str}],
     "experience": [{"company": str, "title": str, "description": str, "tags": [str]}],
     "leadership": [{"organization": str, "role": str, "description": str}],
     "certifications": [{"title": str, "issuer": str, "active": bool}],
     "specializations": [{"title": str, "issuer_details": str}],
-    "thesis": {"degree": str, "title": str, "institution_details": str, "description": str, "url": str},
+    "thesis": {"title": str, "institution_details": str, "description": str, "url": str},
     "papers": [{"title": str, "venue": str, "url": str}],
     "open_source": [{"title": str, "description": str, "href": str}],
     "youtube_series": [{"title": str, "description": str, "url": str}],
@@ -91,6 +87,9 @@ def _download(url: str, accept: str = "application/json") -> bytes:
         request = urllib.request.Request(url, headers=headers)  # noqa: S310
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310
             payload = response.read(MAX_BYTES + 1)
+            length = response.headers.get("Content-Length")
+            if len(payload) <= MAX_BYTES and length is not None and len(payload) != int(length):
+                raise http.client.IncompleteRead(payload)
     except urllib.error.HTTPError as error:
         msg = f"the website returned HTTP {error.code}"
         raise FmindError(msg) from error
@@ -112,6 +111,8 @@ def _validate(value: object, shape: object, path: str) -> None:
         for index, item in enumerate(value):
             _validate(item, shape[0], f"{path}[{index}]")
     elif isinstance(shape, type) and type(value) is shape:
+        if isinstance(value, str) and CONTROL_PATTERN.search(value):
+            raise FmindError(f"the website returned terminal control characters at {path}")
         return
     else:
         raise FmindError(f"the profile endpoint returned an invalid portfolio document at {path}")
@@ -138,6 +139,8 @@ def _parse_markdown(payload: bytes) -> str:
         raise FmindError("the article was not UTF-8 text") from error
     if not text.strip() or text.lstrip().startswith("<"):
         raise FmindError("the article endpoint did not return Markdown")
+    if CONTROL_PATTERN.search(text):
+        raise FmindError("the article contained terminal control characters")
     return text
 
 
