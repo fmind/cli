@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   scan:
-    name: Full-history scan
+    name: Full-history and dependency scan
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -27,3 +27,5 @@ jobs:
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
       - name: Scan complete Git history
         run: gitleaks git --redact=100 --verbose
+      - name: Audit locked dependencies
+        run: mise run check:vuln

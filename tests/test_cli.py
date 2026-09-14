@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,19 +17,19 @@ SECTIONS = [
     "whoami",
     "about",
     "skills",
-    "work",
+    "experiences",
+    "certifications",
     "community",
-    "cert",
     "papers",
-    "project",
+    "projects",
     "sites",
-    "article",
+    "articles",
     "hire",
 ]
 
 
 @pytest.fixture(autouse=True)
-def _served(cache_home: Path, offline: None) -> None:
+def _served(offline: None) -> None:
     """Every test in this module renders the fixture document."""
 
 
@@ -42,33 +41,48 @@ def test_section_renders(section: str) -> None:
 
 
 def test_whoami_shows_identity_and_current_mission() -> None:
-    result = runner.invoke(app, ["--no-color", "whoami"])
-    assert "Médéric Hurier" in result.output
-    assert "AI Security Architect" in result.output
-    assert "Decathlon" in result.output, "the current engagement is the mission line"
-    assert "Google" not in result.output, "only the current engagement belongs in whoami"
+    result = runner.invoke(app, ["--no-color", "whoami"], terminal_width=120)
+    assert "Alex Example" in result.output
+    assert "Software Architect" in result.output
+    assert "Current Company" in result.output, "the current engagement is the mission line"
+    assert "Past Company" not in result.output, "only the current engagement belongs in whoami"
 
 
-def test_skills_reads_as_a_usage_screen() -> None:
+def test_whoami_reads_the_same_record_the_website_header_prints() -> None:
+    """The header is one record in one order; the CLI must not invent another."""
+    output = runner.invoke(app, ["--no-color", "whoami"], terminal_width=120).output
+    rows = [line.split()[0] for line in output.splitlines() if line.strip()]
+    fields = [
+        row for row in rows if row in {"Name", "Role", "Mission", "Degree", "Status", "Location", "Contact", "Website"}
+    ]
+    assert fields == ["Name", "Role", "Mission", "Degree", "Status", "Location", "Contact", "Website"]
+    # The degree and the base of operations are published facts, never local copy.
+    assert "PhD, Example Field — Example University" in output
+    assert "Example City, EX · fr, en" in output
+
+
+def test_skills_renders_the_published_titles(document: dict[str, Any]) -> None:
     result = runner.invoke(app, ["--no-color", "skills"])
-    assert "USAGE" in result.output
-    assert "OPTIONS" in result.output
-    assert "--agents" in result.output
-    assert "--unlisted" in result.output, "a skill with no mapped flag falls back to its first word"
+    assert result.exit_code == 0
+    for card in document["expertise"]:
+        assert card["title"] in result.stdout
+        assert card["description"] in result.stdout
+    assert "USAGE" not in result.stdout
 
 
-def test_cert_verify_hides_expired_credentials() -> None:
-    full = runner.invoke(app, ["--no-color", "cert"]).output
-    assert "ML Engineer" in full
-    assert "SPECIALIZATIONS" in full
-    verified = runner.invoke(app, ["--no-color", "cert", "--verify"]).output
-    assert "Cloud Architect" in verified
-    assert "ML Engineer" not in verified
-    assert "SPECIALIZATIONS" not in verified
+def test_certifications_spell_their_state_the_way_the_website_does() -> None:
+    output = runner.invoke(app, ["--no-color", "certifications"]).output
+    assert "[active] " in output
+    assert "[past] " in output
+    assert "Cloud Architect" in output
+    assert "ML Engineer" in output
+    assert "SPECIALIZATIONS" in output
+    # One listing, narrowed with jq rather than with a flag of its own.
+    assert runner.invoke(app, ["certifications", "--verify"]).exit_code == 2
 
 
-def test_article_is_newest_first_and_respects_limit() -> None:
-    result = runner.invoke(app, ["--no-color", "article", "--limit", "1"])
+def test_articles_are_newest_first_and_respect_the_limit() -> None:
+    result = runner.invoke(app, ["--no-color", "articles", "--limit", "1"])
     assert "Newer" in result.output
     assert "Older" not in result.output
     assert "fmind read newer" in result.output, "a listing must show how to open an entry"
@@ -87,8 +101,8 @@ def test_search_without_a_match_says_so_and_still_succeeds() -> None:
     assert "no article matches" in result.output
 
 
-def test_search_filters_by_tag() -> None:
-    result = runner.invoke(app, ["--no-color", "search", "", "--tag", "LLM"])
+def test_search_filters_by_tag_without_a_query() -> None:
+    result = runner.invoke(app, ["--no-color", "search", "--tag", "LLM"])
     assert "Older" in result.output
     assert "Newer" not in result.output
 
@@ -123,13 +137,12 @@ def test_read_reports_an_ambiguous_slug(document: dict[str, Any]) -> None:
     assert "matches 2 articles" in result.output
 
 
-def test_read_reports_an_unreachable_article(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_reports_an_unreachable_article(monkeypatch: pytest.MonkeyPatch, document: dict[str, Any]) -> None:
     def fail(url: str, accept: str = "application/json") -> bytes:
         if url.endswith(".md"):
             raise api.FmindError("could not reach the article")
-        raise AssertionError("the profile must still come from the cache")
+        return json.dumps(document).encode()
 
-    runner.invoke(app, ["--no-color", "whoami"])  # warm the profile cache
     monkeypatch.setattr("fmind.api._download", fail)
     result = runner.invoke(app, ["read", "newer"])
     assert result.exit_code == 1
@@ -139,8 +152,8 @@ def test_read_reports_an_unreachable_article(monkeypatch: pytest.MonkeyPatch) ->
 def test_papers_shows_the_thesis_and_publications() -> None:
     output = runner.invoke(app, ["--no-color", "papers"]).output
     assert "Ground truth" in output
-    assert "Euphony" in output
-    assert "MSR 2017" in output
+    assert "Example Paper" in output
+    assert "Example Conference" in output
 
 
 def test_sites_lists_the_published_tools() -> None:
@@ -149,15 +162,15 @@ def test_sites_lists_the_published_tools() -> None:
     assert "leaders" in output
 
 
-def test_project_respects_top() -> None:
-    result = runner.invoke(app, ["--no-color", "project", "--top", "1"])
+def test_projects_respect_the_limit() -> None:
+    result = runner.invoke(app, ["--no-color", "projects", "--limit", "1"])
     assert "repo" in result.output
     assert "series" not in result.output
 
 
-def test_work_puts_the_current_engagement_first() -> None:
-    output = runner.invoke(app, ["--no-color", "work"]).output
-    assert output.index("DECATHLON") < output.index("GOOGLE")
+def test_experiences_put_the_current_engagement_first() -> None:
+    output = runner.invoke(app, ["--no-color", "experiences"]).output
+    assert output.index("CURRENT COMPANY") < output.index("PAST COMPANY")
     assert "current" in output
 
 
@@ -169,10 +182,13 @@ def test_hire_marks_the_closed_service() -> None:
 
 
 @pytest.mark.parametrize("section", SECTIONS)
-def test_json_output_is_machine_readable(section: str) -> None:
-    result = runner.invoke(app, ["--json", section])
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_json_output_is_machine_readable(section: str, position: str) -> None:
+    args = ["--json", section] if position == "before" else [section, "--json"]
+    result = runner.invoke(app, args)
     assert result.exit_code == 0, result.output
-    json.loads(result.output)  # raises if the section emitted prose
+    json.loads(result.stdout)  # raises if the section emitted prose
+    assert result.stderr == ""
 
 
 def test_json_read_carries_the_markdown() -> None:
@@ -186,8 +202,8 @@ def test_json_search_is_machine_readable() -> None:
     assert [item["slug"] for item in payload] == ["older"]
 
 
-def test_json_article_returns_only_the_limit() -> None:
-    payload = json.loads(runner.invoke(app, ["--json", "article", "--limit", "1"]).output)
+def test_json_articles_return_only_the_limit() -> None:
+    payload = json.loads(runner.invoke(app, ["--json", "articles", "--limit", "1"]).output)
     assert [item["title"] for item in payload] == ["Newer"]
 
 
@@ -204,7 +220,7 @@ def test_no_arguments_shows_help() -> None:
 
 def test_unreachable_profile_reports_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(url: str, accept: str = "application/json") -> bytes:
-        raise api.FmindError("could not reach https://www.fmind.dev/api/profile")
+        raise api.FmindError("could not reach https://example.test/api/profile")
 
     monkeypatch.setattr("fmind.api._download", fail)
     result = runner.invoke(app, ["whoami"])
@@ -213,23 +229,92 @@ def test_unreachable_profile_reports_cleanly(monkeypatch: pytest.MonkeyPatch) ->
     assert "Traceback" not in result.output
 
 
-def test_refresh_flag_is_passed_through(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: dict[str, Any] = {}
+@pytest.mark.parametrize("command", [[], ["experiences"], ["read"]])
+def test_help_exposes_json_and_omits_refresh(command: list[str]) -> None:
+    result = runner.invoke(app, [*command, "--help"])
+    assert result.exit_code == 0
+    assert "--json" in result.stdout
+    assert "--refresh" not in result.stdout
 
-    def spy(*, refresh: bool = False) -> dict[str, Any]:
-        seen["refresh"] = refresh
-        return {
-            "metadata": {
-                "name": "n",
-                "alternate_name": "a",
-                "job_title": "j",
-                "headline_primary": "h",
-                "email": "e",
-                "site_url": "s",
-            },
-            "biography": ["b"],
-        }
 
-    monkeypatch.setattr("fmind.cli.load_profile", spy)
-    assert runner.invoke(app, ["--refresh", "about"]).exit_code == 0
-    assert seen["refresh"] is True
+def test_json_experiences_are_the_website_section(document: dict[str, Any]) -> None:
+    result = runner.invoke(app, ["experiences", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == document["experience"]
+
+
+@pytest.mark.parametrize("command", [["search", "older"], ["read", "newer"], ["read", "newer", "--raw"]])
+def test_article_commands_accept_trailing_json(command: list[str]) -> None:
+    result = runner.invoke(app, [*command, "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)
+    assert result.stderr == ""
+
+
+def test_json_option_does_not_leak_between_invocations() -> None:
+    assert runner.invoke(app, ["experiences", "--json"]).exit_code == 0
+    plain = runner.invoke(app, ["experiences"])
+    assert plain.exit_code == 0
+    assert not plain.stdout.startswith("[")
+
+
+@pytest.mark.parametrize("command", [["experiences"], ["experiences", "--json"]])
+def test_malformed_profile_is_a_one_line_error(monkeypatch: pytest.MonkeyPatch, command: list[str]) -> None:
+    monkeypatch.setattr("fmind.api._download", lambda *args: b'{"metadata": {}}')
+    result = runner.invoke(app, command)
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.startswith("fmind: ")
+    assert len(result.stderr.splitlines()) == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_ambiguous_slug_error_is_one_line(document: dict[str, Any]) -> None:
+    document["articles"].append(dict(document["articles"][0], slug="newer-still"))
+    result = runner.invoke(app, ["read", "new"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert len(result.stderr.splitlines()) == 1
+
+
+def test_plain_biography_renders_markdown(document: dict[str, Any]) -> None:
+    document["biography"] = ["A **bold** introduction."]
+    result = runner.invoke(app, ["--no-color", "about"])
+    assert result.exit_code == 0
+    assert "A bold introduction." in result.stdout
+    assert "**" not in result.stdout
+
+
+def test_community_keeps_the_full_organization(document: dict[str, Any]) -> None:
+    document["leadership"][0]["organization"] = "Example Research Foundation"
+    result = runner.invoke(app, ["--no-color", "community"], terminal_width=120)
+    assert result.exit_code == 0
+    assert "Example Research Foundation" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "command",
+    [["projects", "--limit", "0"], ["articles", "--limit", "201"], ["search", "--limit", "0"]],
+)
+def test_invalid_usage_exits_without_data(command: list[str]) -> None:
+    result = runner.invoke(app, command)
+    assert result.exit_code == 2
+    assert result.stdout == ""
+
+
+def test_colour_respects_no_color_and_explicit_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fmind import render
+
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert render.console().no_color
+    assert render.console(color=False).no_color
+    assert not render.console(color=True).no_color
+    assert render.console(color=True).is_terminal
+    result = runner.invoke(app, ["--no-color", "experiences"])
+    assert "\x1b[" not in result.stdout
+    coloured = runner.invoke(app, ["--color", "experiences"])
+    assert "\x1b[" in coloured.stdout
+    json_result = runner.invoke(app, ["--color", "experiences", "--json"])
+    assert "\x1b[" not in json_result.stdout
+    assert json.loads(json_result.stdout)

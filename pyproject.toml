@@ -24,6 +24,13 @@ Issues = "https://github.com/fmind/cli/issues"
 [project.scripts]
 fmind = "fmind.cli:app"
 
+[project.optional-dependencies]
+mcp = [
+  "httpx2>=2.12,<3",
+  "mcp>=2.2,<3",
+  "mcp-types>=2.2,<3",
+]
+
 [dependency-groups]
 dev = [
   "pytest>=8.3",
@@ -53,6 +60,7 @@ docstring-code-format = true
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers --cov=fmind --cov-branch --cov-fail-under=85"
 testpaths = ["tests"]
+filterwarnings = ["error"]
 
 [tool.coverage.report]
 exclude_also = ["if __name__ == .__main__.:", "raise NotImplementedError"]

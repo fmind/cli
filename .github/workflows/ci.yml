@@ -54,4 +54,4 @@ jobs:
       - name: Run the test suite
         env:
           PYTHON_VERSION: ${{ matrix.python }}
-        run: uv run --locked --all-groups --python "$PYTHON_VERSION" pytest
+        run: uv run --locked --all-groups --all-extras --python "$PYTHON_VERSION" pytest

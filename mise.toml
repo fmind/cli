@@ -25,16 +25,16 @@ run = "uv build --clear"
 [tasks.check]
 alias = "c"
 description = "Run all static checks in parallel"
-depends = ["check:actions", "check:format", "check:leaks", "check:lint", "check:types"]
+depends = ["check:actions", "check:format", "check:leaks", "check:lint", "check:types", "check:vuln"]
 
 [tasks."check:actions"]
 description = "Lint and audit GitHub Actions workflows (actionlint + zizmor)"
-run = ["actionlint", "zizmor --offline .github/workflows/"]
+run = ["actionlint", "zizmor --offline .github/"]
 
 [tasks."check:format"]
 alias = "cf"
 description = "Check formatting and the lockfile"
-run = ["uv lock --check", "uv run --locked ruff format --check src tests", "dprint check"]
+run = ["uv lock --check", "uv run --locked --extra mcp ruff format --check src tests", "dprint check"]
 
 [tasks."check:leaks"]
 alias = "cs"
@@ -47,12 +47,16 @@ run = [
 [tasks."check:lint"]
 alias = "cl"
 description = "Lint Python sources (ruff)"
-run = "uv run --locked ruff check src tests"
+run = "uv run --locked --extra mcp ruff check src tests"
 
 [tasks."check:types"]
 alias = "ct"
 description = "Type-check Python sources (ty)"
-run = "uv run --locked ty check src"
+run = "uv run --locked --extra mcp ty check src"
+
+[tasks."check:vuln"]
+description = "Audit locked Python dependencies for known vulnerabilities"
+run = "uv audit --locked --preview-features audit-command"
 
 [tasks.clean]
 description = "Remove build artifacts, caches, and coverage files"
@@ -62,21 +66,21 @@ run = "rm -rf .coverage .pytest_cache/ .ruff_cache/ .ty_cache/ dist/ htmlcov/"
 alias = "f"
 description = "Format all sources and documents"
 run = [
-  "uv run --locked ruff check --select I --fix src tests",
-  "uv run --locked ruff format src tests",
-  "dprint fmt --allow-no-files",
+  "uv run --locked --extra mcp ruff check --select I --fix src tests",
+  "uv run --locked --extra mcp ruff format src tests",
+  "dprint fmt",
 ]
 
 [tasks.install]
 alias = "i"
 description = "Sync the locked environment and install git hooks"
-run = ["uv sync --all-groups --frozen", "lefthook install"]
+run = ["uv sync --all-groups --all-extras --frozen", "lefthook install"]
 
 [tasks.smoke]
 description = "Exercise every command against the live site (network-dependent, not a merge gate)"
-run = "uv run --locked python -m tests.smoke"
+run = "uv run --locked --extra mcp python -m tests.smoke"
 
 [tasks.test]
 alias = "t"
 description = "Run the offline pytest suite with branch coverage"
-run = "uv run --locked pytest"
+run = "uv run --locked --extra mcp pytest"

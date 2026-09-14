@@ -1,10 +1,7 @@
 # https://lefthook.dev/configuration/
 pre-commit:
-  parallel: false
   commands:
-    format:
-      run: mise run format
-      stage_fixed: true
+    # Formatting is explicit: hooks must not rewrite or restage unrelated work.
     check:
       run: mise run check
 

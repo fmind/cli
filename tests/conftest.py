@@ -1,10 +1,8 @@
-"""Shared fixtures: a representative profile document and an isolated cache."""
+"""Shared fixtures: a synthetic profile document and offline network boundary."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,22 +15,25 @@ def document() -> dict[str, Any]:
     """A profile document with the same shape as /api/profile."""
     return {
         "metadata": {
-            "name": "Médéric Hurier",
-            "alternate_name": "Fmind",
-            "job_title": "AI Security Architect (PhD) • Freelancer • Cyberspace",
-            "headline_primary": "AI Agents, MLOps & Security",
-            "email": "contact@fmind.dev",
-            "site_url": "https://www.fmind.dev",
+            "name": "Alex Example",
+            "alternate_name": "Example",
+            "job_title": "Software Architect",
+            "headline_primary": "Example expertise",
+            "location": "Example City",
+            "country": "EX",
+            "languages": ["fr", "en"],
+            "email": "alex@example.test",
+            "site_url": "https://example.test",
         },
         "biography": ["First paragraph.", "Second paragraph."],
-        "leadership": [{"role": "Ambassador", "organization": "The Linux Foundation", "description": "d", "url": "u"}],
+        "leadership": [{"role": "Ambassador", "organization": "Example Foundation", "description": "d", "url": "u"}],
         "expertise": [
-            {"title": "Agentic Orchestration", "emoji": "🤖", "description": "agents"},
+            {"title": "Automation", "emoji": "🤖", "description": "agents"},
             {"title": "Unlisted Skill", "emoji": "🔧", "description": "other"},
         ],
         "experience": [
             {
-                "company": "Decathlon",
+                "company": "Current Company",
                 "logo": "d.webp",
                 "title": "Architect",
                 "brand_color": "#000",
@@ -40,7 +41,7 @@ def document() -> dict[str, Any]:
                 "tags": ["AI/ML"],
             },
             {
-                "company": "Google",
+                "company": "Past Company",
                 "logo": "g.webp",
                 "title": "Research Partner",
                 "brand_color": "#000",
@@ -53,7 +54,7 @@ def document() -> dict[str, Any]:
                 "url": "u",
                 "logo": "l",
                 "title": "Cloud Architect",
-                "issuer": "Google Cloud",
+                "issuer": "Cloud Provider",
                 "cert_id": "1",
                 "active": True,
             },
@@ -61,49 +62,50 @@ def document() -> dict[str, Any]:
                 "url": "u",
                 "logo": "l",
                 "title": "ML Engineer",
-                "issuer": "Google Cloud",
+                "issuer": "Cloud Provider",
                 "cert_id": "2",
                 "active": False,
             },
         ],
-        "specializations": [{"url": "u", "logo": "l", "title": "GKE", "issuer_details": "Google"}],
+        "specializations": [{"url": "u", "logo": "l", "title": "Containers", "issuer_details": "Past Company"}],
         "thesis": {
+            "degree": "PhD, Example Field",
             "title": "Ground truth",
             "url": "u",
-            "institution_details": "Uni Luxembourg, 2019",
+            "institution_details": "Example University",
             "description": "d",
-            "links": [{"label": "Servalx", "url": "https://github.com/fmind/servalx"}],
+            "links": [{"label": "Code", "url": "https://example.test/thesis-code"}],
         },
         "papers": [
             {
-                "title": "Euphony",
-                "url": "https://orbilu.example/euphony",
-                "venue": "MSR 2017",
-                "code": "https://github.com/fmind/euphony",
-                "code_label": "Euphony",
+                "title": "Example Paper",
+                "url": "https://orbilu.example/example-paper",
+                "venue": "Example Conference",
+                "code": "https://example.test/paper-code",
+                "code_label": "Example Paper",
             }
         ],
         "tags": [{"name": "Agent", "description": "d"}],
         "articles": [
             {
-                "date": "2026-08-16",
+                "date": "2024-08-16",
                 "updated": None,
                 "title": "Newer",
                 "description": "d",
                 "slug": "newer",
-                "url": "https://www.fmind.dev/articles/newer/",
+                "url": "https://example.test/articles/newer/",
                 "image_url": "i",
                 "image_alt": "a",
                 "tags": ["Agent"],
                 "reading_minutes": 9,
             },
             {
-                "date": "2026-01-01",
+                "date": "2024-01-01",
                 "updated": None,
                 "title": "Older",
                 "description": "d",
                 "slug": "older",
-                "url": "https://www.fmind.dev/articles/older/",
+                "url": "https://example.test/articles/older/",
                 "image_url": "i",
                 "image_alt": "a",
                 "tags": ["LLM"],
@@ -116,7 +118,7 @@ def document() -> dict[str, Any]:
                 "title": "Calculator",
                 "description": "d",
                 "audience": "leaders",
-                "url": "https://www.fmind.dev/sites/calc/",
+                "url": "https://example.test/sites/calc/",
             }
         ],
         "open_source": [{"title": "repo", "href": "h", "description": "d"}],
@@ -129,7 +131,7 @@ def document() -> dict[str, Any]:
                 "badge": "closed",
                 "badge_type": "error",
                 "cta_text": "Mail",
-                "cta_url": "mailto:contact@fmind.dev",
+                "cta_url": "mailto:alex@example.test",
             },
             {
                 "icon": "🎓",
@@ -144,11 +146,16 @@ def document() -> dict[str, Any]:
     }
 
 
-@pytest.fixture
-def cache_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Redirect the on-disk cache into a temporary directory."""
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    yield tmp_path / "fmind" / "profile.json"
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An accidental real HTTP request fails the offline suite immediately."""
+
+    def denied(*args: object, **kwargs: object) -> None:
+        raise AssertionError("network access is forbidden in offline tests")
+
+    monkeypatch.setattr("urllib.request.urlopen", denied)
+    monkeypatch.setattr("httpx2.AsyncHTTPTransport.handle_async_request", denied)
+    monkeypatch.delenv("FMIND_PROFILE_URL", raising=False)
 
 
 @pytest.fixture

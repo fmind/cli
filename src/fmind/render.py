@@ -23,25 +23,20 @@ WORDMARK = (
     "█     █   █  ▄█▄  █   █  █▄▄▀ ",
 )
 
-SKILL_FLAGS = {
-    "Agentic Orchestration": "--agents",
-    "Production MLOps": "--mlops",
-    "Security-First AI": "--security",
-    "Technical Strategy": "--strategy",
-    "Data Science & ML": "--data",
-    "Python Development": "--python",
-}
 
-
-def console(*, color: bool = True) -> Console:
-    """Build the output console; `color=False` yields plain text for pipes."""
-    return Console(no_color=not color, highlight=False, soft_wrap=False)
+def console(*, color: bool | None = None) -> Console:
+    """Detect terminal colour and NO_COLOR unless explicitly overridden."""
+    return Console(
+        force_terminal=True if color is True else None,
+        no_color=None if color is None else not color,
+        highlight=False,
+    )
 
 
 def _rows(pairs: list[tuple[str, RenderableType]], key_width: int = 11) -> Table:
     """Lay out aligned key/value rows without visible borders."""
     table = Table.grid(padding=(0, 2))
-    table.add_column(style=ACCENT, width=key_width, no_wrap=True)
+    table.add_column(style=ACCENT, width=key_width, overflow="fold")
     table.add_column(overflow="fold")
     for key, value in pairs:
         table.add_row(key, value)
@@ -65,7 +60,10 @@ def banner(doc: dict[str, Any]) -> RenderableType:
 
 
 def whoami(doc: dict[str, Any]) -> RenderableType:
-    """Identity, current mission, contact and availability."""
+    """Identity, current mission, availability, and contact.
+
+    The rows are the website's own header record, in the same order.
+    """
     meta = doc["metadata"]
     experience = doc.get("experience") or []
     mission = Text("—", style=DIM)
@@ -81,46 +79,38 @@ def whoami(doc: dict[str, Any]) -> RenderableType:
         status.append("● ", style="#00ff41" if open_now else ERR)
         status.append(service["title"], style=HI)
         status.append(f" — {service['badge']}", style=DIM)
+    thesis = doc["thesis"]
+    languages = ", ".join(meta["languages"])
     return _rows(
         [
             ("Name", Text(f"{meta['name']} ({meta['alternate_name']})", style=HI)),
             ("Role", Text(meta["job_title"], style="#74e492")),
             ("Mission", mission),
-            ("Degree", Text(doc["thesis"]["institution_details"], style="#74e492")),
+            ("Degree", Text(f"{thesis['degree']} — {thesis['institution_details']}", style="#74e492")),
+            ("Status", status),
+            ("Location", Text(f"{meta['location']}, {meta['country']} · {languages}", style="#74e492")),
             ("Contact", Text(meta["email"], style=FLAG)),
             ("Website", Text(meta["site_url"], style=FLAG)),
-            ("Status", status),
         ]
     )
 
 
 def about(doc: dict[str, Any]) -> RenderableType:
     """The biography paragraphs."""
-    return Group(*(Padding(Text(p, style="#74e492"), (0, 0, 1, 0)) for p in doc["biography"]))
+    return Group(*(Padding(Markdown(p, hyperlinks=False), (0, 0, 1, 0)) for p in doc["biography"]))
 
 
 def skills(doc: dict[str, Any]) -> RenderableType:
-    """Expertise laid out like a usage screen, matching www.fmind.dev."""
-    flags = [SKILL_FLAGS.get(card["title"], "--" + card["title"].split()[0].lower()) for card in doc["expertise"]]
-    synopsis = Text("fmind", style=ACCENT)
-    synopsis.append(" skills ", style=HI)
-    synopsis.append(" ".join(f"[{flag}]" for flag in flags), style=FLAG)
-    table = Table.grid(padding=(0, 2))
-    table.add_column(style=FLAG, width=12, no_wrap=True)
-    table.add_column(overflow="fold")
-    for card, flag in zip(doc["expertise"], flags, strict=True):
-        body = Text(card["title"], style=HI)
-        body.append(f" — {card['description']}", style=DIM)
-        table.add_row(flag, body)
+    """Show expertise without inventing command-line options or local labels."""
     return Group(
-        Text("USAGE", style=DIM),
-        Padding(synopsis, (0, 0, 1, 2)),
-        Text("OPTIONS", style=DIM),
-        Padding(table, (0, 0, 0, 2)),
+        *(
+            Padding(Group(Text(card["title"], style=HI), Text(card["description"], style=DIM)), (0, 0, 1, 0))
+            for card in doc["expertise"]
+        )
     )
 
 
-def work(doc: dict[str, Any]) -> RenderableType:
+def experiences(doc: dict[str, Any]) -> RenderableType:
     """Engagements, current one first."""
     blocks: list[RenderableType] = []
     for index, job in enumerate(doc["experience"]):
@@ -141,42 +131,42 @@ def community(doc: dict[str, Any]) -> RenderableType:
     """Ambassador and advisory roles."""
     return _rows(
         [
-            (r["organization"][:11], Group(Text(r["role"], style=HI), Text(r["description"], style=DIM)))
+            (r["organization"], Group(Text(r["role"], style=HI), Text(r["description"], style=DIM)))
             for r in doc["leadership"]
         ],
-        key_width=13,
+        key_width=28,
     )
 
 
-def cert(doc: dict[str, Any], *, verify: bool = False) -> RenderableType:
-    """Credentials, plus specializations unless `verify` narrows to active ones."""
+def certifications(doc: dict[str, Any]) -> RenderableType:
+    """Credentials, the doctorate that backs them, and the specializations."""
     table = Table.grid(padding=(0, 2))
     table.add_column(width=8, no_wrap=True)
     table.add_column(overflow="fold")
     for badge in doc["certifications"]:
         active = bool(badge["active"])
-        if verify and not active:
-            continue
-        state = Text("active" if active else "expired", style="#00ff41" if active else DIM)
+        # The same two words the website spells, so colour never carries the state.
+        state = Text("[active]" if active else "[past]", style="#00ff41" if active else DIM)
         body = Text(badge["title"], style=HI if active else "#74e492")
         body.append(f" — {badge['issuer']}", style=DIM)
         table.add_row(state, body)
-    thesis = Text(doc["thesis"]["title"], style=HI)
-    thesis.append(f" — {doc['thesis']['institution_details']}", style=DIM)
-    parts: list[RenderableType] = [table, Padding(Group(Text("PhD", style=ACCENT), thesis), (1, 0, 0, 0))]
-    if not verify:
-        specs = Text("\n".join(f"  {s['title']} — {s['issuer_details']}" for s in doc["specializations"]), style=DIM)
-        parts.append(Padding(Group(Text("SPECIALIZATIONS", style=DIM), specs), (1, 0, 0, 0)))
-    return Group(*parts)
+    degree = Text(doc["thesis"]["title"], style=HI)
+    degree.append(f" — {doc['thesis']['institution_details']}", style=DIM)
+    specs = Text("\n".join(f"  {s['title']} — {s['issuer_details']}" for s in doc["specializations"]), style=DIM)
+    return Group(
+        table,
+        Padding(Group(Text(doc["thesis"]["degree"], style=ACCENT), degree), (1, 0, 0, 0)),
+        Padding(Group(Text("SPECIALIZATIONS", style=DIM), specs), (1, 0, 0, 0)),
+    )
 
 
-def project(doc: dict[str, Any], *, top: int = 6) -> RenderableType:
+def projects(doc: dict[str, Any], *, limit: int = 6) -> RenderableType:
     """Open-source repositories and video series."""
     items = [(p["title"], p["description"], p["href"]) for p in doc["open_source"]]
     items += [(v["title"], v["description"], v["url"]) for v in doc["youtube_series"]]
     blocks = [
         Padding(Group(Text(title, style=HI), Text(description, style=DIM), Text(url, style=FLAG)), (0, 0, 1, 0))
-        for title, description, url in items[: max(top, 0)]
+        for title, description, url in items[: max(limit, 0)]
     ]
     return Group(*blocks)
 
@@ -209,7 +199,7 @@ def papers(doc: dict[str, Any]) -> RenderableType:
     """The doctorate and the peer-reviewed record behind it."""
     thesis = doc["thesis"]
     head = Group(
-        Text("PhD", style=ACCENT),
+        Text(thesis["degree"], style=ACCENT),
         Text(thesis["title"], style=HI),
         Text(thesis["institution_details"], style="#74e492"),
         Text(thesis["description"], style=DIM),
