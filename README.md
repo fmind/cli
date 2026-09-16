@@ -18,10 +18,10 @@ Every command fetches from the website and asks HTTP caches to revalidate. There
 
 | Command                                     | Shows                                             |
 | ------------------------------------------- | ------------------------------------------------- |
-| `fmind whoami`                              | Name, current mission, availability, contact      |
+| `fmind whoami`                              | Name, featured experience, availability, contact  |
 | `fmind about`                               | The biography                                     |
 | `fmind skills`                              | Core expertise, as published on the site          |
-| `fmind experiences`                         | Engagements, current one first                    |
+| `fmind experiences`                         | Engagements in website order                      |
 | `fmind community`                           | Ambassador and advisory roles                     |
 | `fmind certifications`                      | Certifications, the PhD, specializations          |
 | `fmind papers`                              | The doctorate and the peer-reviewed publications  |
@@ -129,7 +129,7 @@ A release tag must match the version in `pyproject.toml` (for example, `v0.1.0`)
 
 The **Website compatibility** GitHub Actions workflow runs `mise run smoke` daily at 06:23 UTC, on pushes to `main`, and on manual dispatch. Failed runs use normal GitHub Actions notifications; no issue bot or extra service is needed. The offline CI gate stays independent of website availability.
 
-The same check exercises every portfolio command in text and both JSON option positions, reads the newest article as Markdown, and launches the real MCP stdio bridge. It discovers the remote tools, resources, templates, and prompts; calls every advertised read-only tool; reads resources; and retrieves prompts. The SDK validates tool results against the website's current schemas, and the profile resource is checked against the CLI's rendering contract. API and MCP failures are reported independently. Checks use live data, not snapshots of portfolio facts.
+The same check exercises every portfolio command in text and both JSON option positions, reads the newest article as Markdown, and launches the real MCP stdio bridge. It discovers the remote tools, resources, templates, and prompts; calls every advertised read-only tool, including article reading with a live slug and the hosting calculator with its defaults; reads resources; and retrieves prompts. The SDK validates tool results against the website's current schemas, and the profile resource is checked against the CLI's rendering contract. API and MCP failures are reported independently. Checks use live data, not snapshots of portfolio facts.
 
 After a website deployment, run `mise run smoke` locally or dispatch the workflow:
 

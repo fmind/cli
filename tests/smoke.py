@@ -10,7 +10,7 @@ import sys
 from mcp import Client, StdioServerParameters
 from typer.testing import CliRunner
 
-from fmind.api import _parse_profile
+from fmind.api import _parse_profile, load_profile
 from fmind.cli import app
 
 
@@ -31,9 +31,19 @@ async def smoke_mcp() -> None:
         for tool in tools.tools:
             if not tool.annotations or not tool.annotations.read_only_hint:
                 raise RuntimeError(f"MCP tool {tool.name} is no longer advertised as read-only")
-            # The SDK validates results against the live output schemas. Only the
-            # search tool needs input; no portfolio facts or schemas live here.
-            arguments = {"query": "compatibility", "limit": 1} if tool.name == "search_articles" else {}
+            # The SDK validates results against live output schemas. Discover
+            # article slugs from the profile instead of storing portfolio facts.
+            arguments = {}
+            if tool.name == "search_articles":
+                arguments = {"query": "compatibility", "limit": 1}
+            elif tool.name == "get_article":
+                posts = load_profile()["articles"]
+                if not posts:
+                    raise RuntimeError("the website lists no article for the MCP read check")
+                arguments = {"slug": posts[0]["slug"]}
+            elif tool.name == "compare_llm_hosting":
+                arguments = {"parameters": {}}
+            print(f"check MCP tools/call {tool.name}", flush=True)
             result = await client.call_tool(tool.name, arguments)
             if result.is_error or not result.content:
                 raise RuntimeError(f"MCP tools/call {tool.name} failed")

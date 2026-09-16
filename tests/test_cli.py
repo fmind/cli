@@ -41,21 +41,23 @@ def test_section_renders(section: str) -> None:
     assert result.output.strip(), f"{section} produced no output"
 
 
-def test_whoami_shows_identity_and_current_mission() -> None:
+def test_whoami_shows_identity_and_featured_experience() -> None:
     result = runner.invoke(app, ["--no-color", "whoami"], terminal_width=120)
     assert "Alex Example" in result.output
     assert "Software Architect" in result.output
-    assert "Current Company" in result.output, "the current engagement is the mission line"
-    assert "Past Company" not in result.output, "only the current engagement belongs in whoami"
+    assert "Current Company" in result.output, "the first published engagement is featured"
+    assert "Past Company" not in result.output, "whoami shows only the first published engagement"
 
 
 def test_whoami_needs_only_current_website_fields() -> None:
     output = runner.invoke(app, ["--no-color", "whoami"], terminal_width=120).output
     rows = [line.split()[0] for line in output.splitlines() if line.strip()]
     fields = [
-        row for row in rows if row in {"Name", "Role", "Mission", "Degree", "Status", "Location", "Contact", "Website"}
+        row
+        for row in rows
+        if row in {"Name", "Role", "Experience", "Degree", "Status", "Location", "Contact", "Website"}
     ]
-    assert fields == ["Name", "Role", "Mission", "Status", "Contact", "Website"]
+    assert fields == ["Name", "Role", "Experience", "Status", "Contact", "Website"]
 
 
 def test_skills_renders_the_published_titles(document: dict[str, Any]) -> None:
@@ -165,10 +167,10 @@ def test_projects_respect_the_limit() -> None:
     assert "series" not in result.output
 
 
-def test_experiences_put_the_current_engagement_first() -> None:
+def test_experiences_preserve_website_order_without_inventing_status() -> None:
     output = runner.invoke(app, ["--no-color", "experiences"]).output
     assert output.index("CURRENT COMPANY") < output.index("PAST COMPANY")
-    assert "current" in output
+    assert " · current" not in output
 
 
 def test_hire_marks_the_closed_service() -> None:

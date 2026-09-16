@@ -62,7 +62,7 @@ def banner(doc: dict[str, Any]) -> RenderableType:
 
 
 def whoami(doc: dict[str, Any]) -> RenderableType:
-    """Identity, current mission, availability, and contact."""
+    """Identity, featured experience, availability, and contact."""
     meta = doc["metadata"]
     experience = doc.get("experience") or []
     mission = Text("—", style=DIM)
@@ -82,7 +82,7 @@ def whoami(doc: dict[str, Any]) -> RenderableType:
         [
             ("Name", Text(f"{meta['name']} ({meta['alternate_name']})", style=HI)),
             ("Role", Text(meta["job_title"], style="#74e492")),
-            ("Mission", mission),
+            ("Experience", mission),
             ("Status", status),
             ("Contact", Text(meta["email"], style=FLAG)),
             ("Website", Text(meta["site_url"], style=FLAG)),
@@ -106,12 +106,10 @@ def skills(doc: dict[str, Any]) -> RenderableType:
 
 
 def experiences(doc: dict[str, Any]) -> RenderableType:
-    """Engagements, current one first."""
+    """Engagements in the order published by the website."""
     blocks: list[RenderableType] = []
-    for index, job in enumerate(doc["experience"]):
+    for job in doc["experience"]:
         head = Text(job["company"].upper(), style=ACCENT)
-        if index == 0:
-            head.append(" · current", style=DIM)
         body = Group(
             head,
             Text(job["title"], style=HI),
@@ -140,7 +138,7 @@ def certifications(doc: dict[str, Any]) -> RenderableType:
     table.add_column(overflow="fold")
     for badge in doc["certifications"]:
         active = bool(badge["active"])
-        # The same two words the website spells, so colour never carries the state.
+        # Spell out the published state so colour never carries it alone.
         state = Text("[active]" if active else "[past]", style="#00ff41" if active else DIM)
         body = Text(badge["title"], style=HI if active else "#74e492")
         body.append(f" — {badge['issuer']}", style=DIM)

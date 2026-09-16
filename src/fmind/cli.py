@@ -76,7 +76,7 @@ def _emit(
 
 @app.command()
 def whoami(ctx: typer.Context, as_json: JsonOption = False) -> None:
-    """Name, current mission, availability, and contact."""
+    """Name, featured experience, availability, and contact."""
     doc = _doc()
     _emit(
         ctx, render.whoami(doc), {"metadata": doc["metadata"], "services": doc["services"]}, banner=doc, as_json=as_json
@@ -99,7 +99,7 @@ def skills(ctx: typer.Context, as_json: JsonOption = False) -> None:
 
 @app.command()
 def experiences(ctx: typer.Context, as_json: JsonOption = False) -> None:
-    """Engagements, current one first."""
+    """Engagements in the order published by the website."""
     doc = _doc()
     _emit(ctx, render.experiences(doc), doc["experience"], as_json=as_json)
 
