@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import version
 from typing import Any
 
 import pytest
@@ -209,7 +210,8 @@ def test_json_articles_return_only_the_limit() -> None:
 def test_version_exits_before_any_fetch() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "fmind 0." in result.output
+    assert result.stdout == f"fmind {version('fmind')}\n"
+    assert not result.stderr
 
 
 def test_no_arguments_shows_help() -> None:
