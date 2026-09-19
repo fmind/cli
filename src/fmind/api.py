@@ -29,16 +29,16 @@ PROFILE_SHAPE = {
     "biography": [str],
     "expertise": [{"title": str, "description": str}],
     "experience": [{"company": str, "title": str, "description": str, "tags": [str]}],
-    "leadership": [{"organization": str, "role": str, "description": str}],
-    "certifications": [{"title": str, "issuer": str, "active": bool}],
-    "specializations": [{"title": str, "issuer_details": str}],
+    "leadership": [{"organization": str, "role": str, "description": str, "url": str}],
+    "certifications": [{"title": str, "issuer": str, "active": bool, "url": str}],
+    "specializations": [{"title": str, "issuer_details": str, "url": str}],
     "thesis": {"title": str, "institution_details": str, "description": str, "url": str},
     "papers": [{"title": str, "venue": str, "url": str}],
     "open_source": [{"title": str, "description": str, "href": str}],
     "youtube_series": [{"title": str, "description": str, "url": str}],
     "site_pages": [{"title": str, "description": str, "audience": str, "url": str}],
     "articles": [{"title": str, "description": str, "slug": str, "date": str, "tags": [str], "reading_minutes": int}],
-    "services": [{"title": str, "description": str, "badge": str, "badge_type": str, "cta_url": str}],
+    "services": [{"title": str, "description": str, "badge": str, "cta_url": str}],
 }
 
 

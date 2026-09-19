@@ -38,6 +38,8 @@ The commands group sections of the website's profile API. Their names stay stabl
 
 `--json` works before or after the command: both `fmind --json experiences` and `fmind experiences --json` print the raw website section. Global `--color` / `--no-color` and `--version` go before the command. Colour is detected automatically, including `NO_COLOR` and redirected output. Use `fmind --help` or `fmind <command> --help` for options.
 
+Output uses your terminal's default text colour and blue accent. Community roles and credentials use stacked entries with their published links, so they remain readable in narrow terminals.
+
 ### Reading
 
 `fmind search` matches titles, summaries, tags and slugs; terms are ANDed, so each extra word narrows the result. `--tag` restricts to one of the site's own tags.
@@ -62,8 +64,12 @@ fmind read "$slug" --raw | glow -
 ```bash
 fmind articles --limit 20 --json | jq -r '.[] | "\(.date[:10])  \(.title)"'
 fmind search agent --json | jq -r '.[].url'
-fmind certifications --json | jq -r '.[] | select(.active) | .title'
+fmind certifications --json | jq -r '.certifications[] | select(.active) | .title'
 ```
+
+`whoami --json` includes `metadata`, `experience` (a list containing the featured engagement, or an empty list), and `services`. `certifications --json` includes `certifications`, `thesis`, and `specializations`.
+
+**Migration from 0.2.0:** `certifications --json` now returns an object instead of an array; change credential filters from `.[]` to `.certifications[]`. The `experience` field in `whoami --json` is additive. These changes are unreleased; the commands above describe this checkout.
 
 ## Install
 

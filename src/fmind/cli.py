@@ -23,7 +23,7 @@ app = typer.Typer(
     pretty_exceptions_enable=False,
 )
 
-JsonOption = Annotated[bool, typer.Option("--json", help="Print the raw section as JSON instead of prose.")]
+JsonOption = Annotated[bool, typer.Option("--json", help="Print the command's data as JSON instead of prose.")]
 # One option name for "how many", on every command that prints a list.
 LimitOption = Annotated[int, typer.Option("--limit", min=1, max=200, help="How many entries to show.")]
 
@@ -59,18 +59,13 @@ def _doc() -> dict[str, Any]:
         raise _fail(str(error)) from error
 
 
-def _emit(
-    ctx: typer.Context, body: RenderableType, payload: Any, *, as_json: bool, banner: dict[str, Any] | None = None
-) -> None:
-    """Print either the rendered section or its raw JSON."""
+def _emit(ctx: typer.Context, body: RenderableType, payload: Any, *, as_json: bool) -> None:
+    """Print either the rendered section or its JSON data."""
     if as_json or ctx.find_root().params["as_json"]:
         json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
         return
     out = render.console(color=ctx.find_root().params["color"])
-    if banner is not None:
-        out.print(render.banner(banner))
-        out.print()
     out.print(body)
 
 
@@ -79,7 +74,10 @@ def whoami(ctx: typer.Context, as_json: JsonOption = False) -> None:
     """Name, featured experience, availability, and contact."""
     doc = _doc()
     _emit(
-        ctx, render.whoami(doc), {"metadata": doc["metadata"], "services": doc["services"]}, banner=doc, as_json=as_json
+        ctx,
+        render.whoami(doc),
+        {"metadata": doc["metadata"], "experience": doc["experience"][:1], "services": doc["services"]},
+        as_json=as_json,
     )
 
 
@@ -110,7 +108,12 @@ def certifications(ctx: typer.Context, as_json: JsonOption = False) -> None:
     doc = _doc()
     # Every credential is listed with its state spelled out, the way the website
     # spells it; `--json` and jq narrow the list better than a flag could.
-    _emit(ctx, render.certifications(doc), doc["certifications"], as_json=as_json)
+    _emit(
+        ctx,
+        render.certifications(doc),
+        {"certifications": doc["certifications"], "thesis": doc["thesis"], "specializations": doc["specializations"]},
+        as_json=as_json,
+    )
 
 
 @app.command()

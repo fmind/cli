@@ -55,9 +55,9 @@ def test_whoami_needs_only_current_website_fields() -> None:
     fields = [
         row
         for row in rows
-        if row in {"Name", "Role", "Experience", "Degree", "Status", "Location", "Contact", "Website"}
+        if row in {"Name", "Role", "Headline", "Experience", "Degree", "Status", "Location", "Contact", "Website"}
     ]
-    assert fields == ["Name", "Role", "Experience", "Status", "Contact", "Website"]
+    assert fields == ["Name", "Role", "Headline", "Experience", "Status", "Contact", "Website"]
 
 
 def test_skills_renders_the_published_titles(document: dict[str, Any]) -> None:
@@ -327,3 +327,75 @@ def test_remote_organization_is_literal_text(document: dict[str, Any]) -> None:
     result = runner.invoke(app, ["--no-color", "community"], terminal_width=120)
     assert result.exit_code == 0, result.output
     assert "[bold]Example[/broken]" in result.stdout
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_summary_json_includes_the_information_shown_in_text(document: dict[str, Any], position: str) -> None:
+    def payload(command: str) -> Any:
+        args = ["--json", command] if position == "before" else [command, "--json"]
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, result.output
+        assert not result.stderr
+        return json.loads(result.stdout)
+
+    identity = payload("whoami")
+    assert identity["metadata"] == document["metadata"]
+    assert identity["experience"] == [document["experience"][0]]
+    assert identity["services"] == document["services"]
+    credentials = payload("certifications")
+    assert credentials["certifications"] == document["certifications"]
+    assert credentials["thesis"] == document["thesis"]
+    assert credentials["specializations"] == document["specializations"]
+
+    document["experience"] = []
+    document["certifications"] = []
+    document["specializations"] = []
+    assert payload("whoami")["experience"] == []
+    credentials = payload("certifications")
+    assert credentials["certifications"] == []
+    assert credentials["specializations"] == []
+    assert credentials["thesis"] == document["thesis"]
+
+
+def test_identity_and_community_remain_readable_at_40_columns(
+    monkeypatch: pytest.MonkeyPatch, document: dict[str, Any]
+) -> None:
+    monkeypatch.setenv("COLUMNS", "40")
+    identity = runner.invoke(app, ["--no-color", "whoami"])
+    assert identity.exit_code == 0, identity.output
+    assert document["metadata"]["name"] in identity.stdout
+    assert document["metadata"]["job_title"] in identity.stdout
+    assert document["metadata"]["headline_primary"] in identity.stdout
+    assert identity.stdout.count(document["metadata"]["name"]) == 1
+
+    document["leadership"][0]["organization"] = "Example Research Foundation"
+    document["leadership"][0]["description"] = "Supporting the research community."
+    community = runner.invoke(app, ["--no-color", "community"])
+    assert community.exit_code == 0, community.output
+    assert document["leadership"][0]["organization"] in community.stdout
+    assert document["leadership"][0]["description"] in community.stdout
+    for output in (identity.stdout, community.stdout):
+        assert all(len(line) <= 40 for line in output.splitlines())
+        assert "\x1b" not in output
+
+
+@pytest.mark.parametrize(
+    ("command", "section"),
+    [("community", "leadership"), ("certifications", "certifications"), ("certifications", "specializations")],
+)
+def test_published_links_are_visible_and_validated(document: dict[str, Any], command: str, section: str) -> None:
+    url = f"https://example.test/{section}"
+    document[section][0]["url"] = url
+    result = runner.invoke(app, ["--no-color", command])
+    assert result.exit_code == 0, result.output
+    assert url in result.stdout
+
+    for invalid in (None, 42, "\x1b]52;c;payload\x07"):
+        document[section][0]["url"] = invalid
+        result = runner.invoke(app, [command])
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert len(result.stderr.splitlines()) == 1
+        assert result.stderr.startswith("fmind: ")
+        assert "\x1b" not in result.stderr
+        assert "Traceback" not in result.stderr
