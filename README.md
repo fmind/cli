@@ -69,7 +69,7 @@ fmind certifications --json | jq -r '.certifications[] | select(.active) | .titl
 
 `whoami --json` includes `metadata`, `experience` (a list containing the featured engagement, or an empty list), and `services`. `certifications --json` includes `certifications`, `thesis`, and `specializations`.
 
-**Migration from 0.2.0:** `certifications --json` now returns an object instead of an array; change credential filters from `.[]` to `.certifications[]`. The `experience` field in `whoami --json` is additive. These changes are unreleased; the commands above describe this checkout.
+**Migration to 1.0.0:** `certifications --json` now returns an object instead of an array; change credential filters from `.[]` to `.certifications[]`. The `experience` field in `whoami --json` is additive. Update existing scripts before upgrading from 0.2.0.
 
 ## Install
 
