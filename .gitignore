@@ -1,9 +1,9 @@
-__pycache__/
 *.py[cod]
-.venv/
-dist/
 .coverage
-htmlcov/
 .pytest_cache/
 .ruff_cache/
 .ty_cache/
+.venv/
+__pycache__/
+dist/
+htmlcov/

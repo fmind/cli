@@ -31,7 +31,6 @@ jobs:
           status="$(git status --porcelain)"
           printf '%s\n' "$status"
           test -z "$status"
-
   compat:
     name: Python ${{ matrix.python }}
     runs-on: ubuntu-24.04

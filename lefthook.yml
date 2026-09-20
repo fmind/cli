@@ -4,7 +4,6 @@ pre-commit:
     # Formatting is explicit: hooks must not rewrite or restage unrelated work.
     check:
       run: mise run check
-
 pre-push:
   commands:
     test:
