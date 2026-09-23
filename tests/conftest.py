@@ -81,7 +81,7 @@ def document() -> dict[str, Any]:
                 "code_label": "Example Paper",
             }
         ],
-        "tags": [{"name": "Agent", "description": "d"}],
+        "tags": [{"name": "Agent", "description": "d"}, {"name": "LLM", "description": "d"}],
         "articles": [
             {
                 "date": "2024-08-16",

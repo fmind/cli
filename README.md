@@ -18,6 +18,7 @@ Every command fetches from the website and asks HTTP caches to revalidate. There
 
 | Command                                     | Shows                                             |
 | ------------------------------------------- | ------------------------------------------------- |
+| `fmind`                                     | The `whoami` card and a pointer to `--help`       |
 | `fmind whoami`                              | Name, featured experience, availability, contact  |
 | `fmind about`                               | The biography                                     |
 | `fmind skills`                              | Core expertise, as published on the site          |
@@ -34,22 +35,22 @@ Every command fetches from the website and asks HTTP caches to revalidate. There
 
 The commands group sections of the website's profile API. Their names stay stable when the website's navigation or visual design changes.
 
-`--limit` bounds projects, articles, and search results; `--json` prints a command's data instead of prose; `--raw` prints an article's Markdown source. Search also accepts `--tag`. Use `--json` and `jq` for other filtering.
+`--limit` bounds articles and search results, and each project list (repositories and video series); `--json` prints a command's data instead of prose; `--raw` prints an article's Markdown source. Search also accepts `--tag`. Use `--json` and `jq` for other filtering.
 
 `--json` works before or after the command: both `fmind --json experiences` and `fmind experiences --json` print the raw website section. Global `--color` / `--no-color` and `--version` go before the command. Colour is detected automatically, including `NO_COLOR` and redirected output. Use `fmind --help` or `fmind <command> --help` for options.
 
-Output uses your terminal's default text colour and blue accent. Community roles and credentials use stacked entries with their published links, so they remain readable in narrow terminals.
+Output uses your terminal's default text colour and blue accent. Community roles and credentials use stacked entries with their published links, so they remain readable in narrow terminals. Links are never folded, so they stay copyable, and terminals that support OSC 8 hyperlinks make them clickable. Redirected output carries no trailing whitespace.
 
 ### Reading
 
-`fmind search` matches titles, summaries, tags and slugs; terms are ANDed, so each extra word narrows the result. `--tag` restricts to one of the site's own tags.
+`fmind search` matches titles, summaries, tags and slugs; terms are ANDed, so each extra word narrows the result. `--tag` restricts to one of the site's own tags, case-insensitively; an unknown tag fails and lists the published ones.
 
 ```bash
 fmind search "agent security"
 fmind search --tag MLOps --limit 3
 ```
 
-`fmind read` takes a slug, or enough of one to be unambiguous, and prints the article. Use `--raw` for the Markdown source.
+`fmind read` takes a slug, or enough of one to be unambiguous, and prints the article. In an interactive terminal it pages through `$PAGER` (default `less`, with `LESS=FRX` unless you set `LESS`), so short articles print directly; `PAGER=cat` disables paging. Use `--raw` for the Markdown source.
 
 ```bash
 slug="$(fmind articles --limit 1 --json | jq -r '.[0].slug')"
@@ -67,7 +68,9 @@ fmind search agent --json | jq -r '.[].url'
 fmind certifications --json | jq -r '.certifications[] | select(.active) | .title'
 ```
 
-`whoami --json` includes `metadata`, `experience` (a list containing the featured engagement, or an empty list), and `services`. `certifications --json` includes `certifications`, `thesis`, and `specializations`.
+`whoami --json` includes `metadata`, `experience` (a list containing the featured engagement, or an empty list), and `services`. `certifications --json` includes `certifications`, `thesis`, and `specializations`. `projects --json` includes `open_source` and `youtube_series`, each keeping the website's fields and bounded by `--limit`.
+
+**Migration to 2.0.0:** `projects --json` now returns an object instead of one mixed array; change filters from `.[]` to `.open_source[]` or `.youtube_series[]`. `--limit` now bounds each list, so video series are no longer crowded out by repositories.
 
 **Migration to 1.0.0:** `certifications --json` now returns an object instead of an array; change credential filters from `.[]` to `.certifications[]`. The `experience` field in `whoami --json` is additive. Update existing scripts before upgrading from 0.2.0.
 
@@ -127,7 +130,7 @@ mise run smoke     # exercise every command against the live site
 mise run all       # format, check, test, build — the gate CI runs
 ```
 
-The pre-commit hook runs checks without changing or staging files; run `mise run format` before committing. The pre-push hook runs the offline tests. CI runs the full gate on the pinned Python and tests Python 3.11–3.13 for compatibility.
+The pre-commit hook runs checks without changing or staging files; run `mise run format` before committing. The pre-push hook runs the offline tests. CI runs the full gate on the pinned Python, tests Python 3.11–3.13 for compatibility, and tests the declared dependency floors with `--resolution lowest-direct` on Python 3.11.
 
 A release tag must match the version in `pyproject.toml` (for example, `v0.1.0`). CD runs the same full gate for that tag and checks the live commands before publishing through PyPI Trusted Publishing. The live smoke check is a release check, not a pull-request gate.
 

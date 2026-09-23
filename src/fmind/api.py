@@ -39,6 +39,7 @@ PROFILE_SHAPE = {
     "site_pages": [{"title": str, "description": str, "audience": str, "url": str}],
     "articles": [{"title": str, "description": str, "slug": str, "date": str, "tags": [str], "reading_minutes": int}],
     "services": [{"title": str, "description": str, "badge": str, "cta_url": str}],
+    "tags": [{"name": str}],
 }
 
 

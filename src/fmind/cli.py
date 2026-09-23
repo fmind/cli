@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shlex
+import shutil
+import subprocess
 import sys
 from typing import Annotated, Any
 
 import typer
-from rich.console import RenderableType
+from rich.console import Console, RenderableType
+from rich.pager import Pager
 
 from fmind import __version__, articles, render
 from fmind.api import FmindError, load_article, load_profile
@@ -16,9 +21,9 @@ from fmind.api import FmindError, load_article, load_profile
 app = typer.Typer(
     name="fmind",
     help="Read Médéric Hurier's (Fmind) portfolio from the terminal. Every command renders the live "
-    "profile published at https://www.fmind.dev/api/profile. Use mcp for the stdio MCP bridge.",
+    "profile published at https://www.fmind.dev/api/profile. Without a command, show the whoami card. "
+    "Use mcp for the stdio MCP bridge.",
     add_completion=False,
-    no_args_is_help=True,
     rich_markup_mode="rich",
     pretty_exceptions_enable=False,
 )
@@ -34,8 +39,9 @@ def _version(value: bool) -> None:
         raise typer.Exit
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     as_json: JsonOption = False,
     color: Annotated[
         bool | None, typer.Option("--color/--no-color", help="Force or suppress ANSI colour; auto by default.")
@@ -43,6 +49,11 @@ def main(
     _v: Annotated[bool, typer.Option("--version", callback=_version, is_eager=True, help="Show the version.")] = False,
 ) -> None:
     """Set output options before the command, or use --json on any command."""
+    if ctx.invoked_subcommand is None:
+        # A bare `fmind` works like a business card; `--help` lists everything else.
+        whoami(ctx)
+        if not as_json:
+            _console(ctx).print("\nfmind --help lists every command.", style="dim")
 
 
 def _fail(message: str) -> typer.Exit:
@@ -59,14 +70,57 @@ def _doc() -> dict[str, Any]:
         raise _fail(str(error)) from error
 
 
-def _emit(ctx: typer.Context, body: RenderableType, payload: Any, *, as_json: bool) -> None:
+class _SystemPager(Pager):
+    """Page through the user's pager with colour, quitting at once when the text fits one screen."""
+
+    def __init__(self, command: list[str]) -> None:
+        self.command = command
+
+    def show(self, content: str) -> None:
+        # Like Git: respect an explicit LESS, otherwise keep colours (-R), skip
+        # paging for short output (-F), and leave the text on screen (-X).
+        environment = {**os.environ, "LESS": os.environ.get("LESS", "FRX")}
+        subprocess.run(self.command, input=content.encode(), env=environment, check=False)  # noqa: S603
+
+
+def _pager_command() -> list[str] | None:
+    """Return the pager for an interactive terminal, or None to print directly."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()) or os.environ.get("TERM") == "dumb":
+        return None
+    try:
+        command = shlex.split(os.environ.get("PAGER", "less"))
+    except ValueError:
+        return None
+    if not command or command[0] == "cat" or shutil.which(command[0]) is None:
+        return None
+    return command
+
+
+def _console(ctx: typer.Context) -> Console:
+    return render.console(color=ctx.find_root().params["color"])
+
+
+def _write(text: str) -> None:
+    """Write and flush, so a closed reader (`| head`) fails inside Click's EPIPE handling, not at exit."""
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
+def _emit(ctx: typer.Context, body: RenderableType, payload: Any, *, as_json: bool, page: bool = False) -> None:
     """Print either the rendered section or its JSON data."""
     if as_json or ctx.find_root().params["as_json"]:
-        json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
-        sys.stdout.write("\n")
+        _write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
         return
-    out = render.console(color=ctx.find_root().params["color"])
-    out.print(body)
+    out = _console(ctx)
+    if not out.is_terminal:
+        out.print(render.Trimmed(body), crop=False)
+        return
+    command = _pager_command() if page else None
+    if command is None:
+        out.print(body, crop=False)
+        return
+    with out.pager(pager=_SystemPager(command), styles=True):
+        out.print(body, crop=False)
 
 
 @app.command()
@@ -132,9 +186,10 @@ def papers(ctx: typer.Context, as_json: JsonOption = False) -> None:
 
 @app.command()
 def projects(ctx: typer.Context, limit: LimitOption = 6, as_json: JsonOption = False) -> None:
-    """Open-source repositories and video series."""
+    """Open-source repositories and video series; --limit bounds each list."""
     doc = _doc()
-    _emit(ctx, render.projects(doc, limit=limit), (doc["open_source"] + doc["youtube_series"])[:limit], as_json=as_json)
+    payload = {"open_source": doc["open_source"][:limit], "youtube_series": doc["youtube_series"][:limit]}
+    _emit(ctx, render.projects(doc, limit=limit), payload, as_json=as_json)
 
 
 @app.command()
@@ -166,6 +221,10 @@ def search(
 ) -> None:
     """Find articles by term, newest match first."""
     doc = _doc()
+    if tag is not None:
+        names = [entry["name"] for entry in doc["tags"]]
+        if tag.lower() not in {name.lower() for name in names}:
+            raise _fail(f"unknown tag {tag!r}; choose one of: {', '.join(names)}")
     found = articles.search(doc["articles"], query, tag=tag, limit=limit)
     footer = f"{len(found)} shown · {len(doc['articles'])} published · fmind read <slug> opens one"
     _emit(ctx, render.articles(found, footer=footer), found, as_json=as_json)
@@ -193,9 +252,10 @@ def read(
         raise _fail(str(error)) from error
     post = articles.by_slug(doc["articles"], resolved)
     if raw and not (as_json or ctx.find_root().params["as_json"]):
-        sys.stdout.write(markdown)
+        _write(markdown)
         return
-    _emit(ctx, render.article_body(markdown), {"slug": resolved, "markdown": markdown, **(post or {})}, as_json=as_json)
+    payload = {"slug": resolved, "markdown": markdown, **(post or {})}
+    _emit(ctx, render.article_body(markdown), payload, as_json=as_json, page=True)
 
 
 @app.command()

@@ -162,10 +162,31 @@ def test_sites_lists_the_published_tools() -> None:
     assert "leaders" in output
 
 
-def test_projects_respect_the_limit() -> None:
+def test_projects_limit_bounds_each_list(document: dict[str, Any]) -> None:
+    document["open_source"].append(dict(document["open_source"][0], title="second-repo"))
     result = runner.invoke(app, ["--no-color", "projects", "--limit", "1"])
     assert "repo" in result.output
-    assert "series" not in result.output
+    assert "second-repo" not in result.output
+    assert "VIDEO SERIES" in result.output
+    assert "series" in result.output, "video series are never crowded out by repositories"
+
+
+def test_projects_json_groups_each_published_list(document: dict[str, Any]) -> None:
+    payload = json.loads(runner.invoke(app, ["projects", "--json"]).stdout)
+    assert payload == {"open_source": document["open_source"], "youtube_series": document["youtube_series"]}
+
+
+def test_search_rejects_an_unknown_tag_and_lists_the_published_ones() -> None:
+    result = runner.invoke(app, ["search", "--tag", "Agents"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "fmind: unknown tag 'Agents'; choose one of: Agent, LLM\n"
+
+
+def test_search_matches_tags_case_insensitively() -> None:
+    result = runner.invoke(app, ["--no-color", "search", "--tag", "llm"])
+    assert result.exit_code == 0
+    assert "Older" in result.output
 
 
 def test_experiences_preserve_website_order_without_inventing_status() -> None:
@@ -214,9 +235,17 @@ def test_version_exits_before_any_fetch() -> None:
     assert not result.stderr
 
 
-def test_no_arguments_shows_help() -> None:
-    result = runner.invoke(app, [])
-    assert "Commands" in result.output
+def test_no_arguments_shows_the_whoami_card_and_points_to_help() -> None:
+    result = runner.invoke(app, ["--no-color"])
+    assert result.exit_code == 0, result.output
+    assert "Alex Example" in result.stdout
+    assert result.stdout.rstrip().endswith("fmind --help lists every command.")
+
+
+def test_no_arguments_with_json_prints_only_the_whoami_data(document: dict[str, Any]) -> None:
+    result = runner.invoke(app, ["--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["metadata"] == document["metadata"]
 
 
 def test_unreachable_profile_reports_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -401,3 +430,98 @@ def test_published_links_are_visible_and_validated(document: dict[str, Any], com
         assert result.stderr.startswith("fmind: ")
         assert "\x1b" not in result.stderr
         assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("section", SECTIONS)
+def test_redirected_output_has_no_trailing_whitespace(section: str) -> None:
+    result = runner.invoke(app, ["--no-color", section], terminal_width=120)
+    assert result.exit_code == 0, result.output
+    assert all(line == line.rstrip() for line in result.stdout.splitlines())
+
+
+def test_long_links_stay_on_one_line(document: dict[str, Any]) -> None:
+    url = "https://example.test/" + "a" * 150
+    document["services"][1]["cta_url"] = url
+    result = runner.invoke(app, ["--no-color", "hire"], terminal_width=40)
+    assert result.exit_code == 0, result.output
+    assert url in result.stdout.splitlines()
+
+
+class _ClosedPipe:
+    """A stdout whose reader has gone away, like `fmind ... | head -0`."""
+
+    encoding = "utf-8"
+
+    def write(self, text: str) -> int:
+        return len(text)
+
+    def flush(self) -> None:
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def isatty(self) -> bool:
+        return False
+
+
+@pytest.mark.parametrize("command", [["--json", "articles"], ["read", "newer", "--raw"]])
+def test_closed_reader_ends_quietly(monkeypatch: pytest.MonkeyPatch, command: list[str]) -> None:
+    import sys
+
+    monkeypatch.setattr(sys, "stdout", _ClosedPipe())
+    with pytest.raises(SystemExit) as exit_info:
+        app(command, standalone_mode=True)
+    # Click turns EPIPE into a quiet exit 1; the data was flushed before interpreter shutdown.
+    assert exit_info.value.code == 1
+
+
+def test_pager_is_used_only_for_an_interactive_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from fmind import cli
+
+    class Terminal:
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr(sys, "stdin", Terminal())
+    monkeypatch.setattr(sys, "stdout", Terminal())
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setenv("PAGER", "less -S")
+    assert cli._pager_command() == ["less", "-S"]
+    for disabled in ("", "cat", "'unbalanced"):
+        monkeypatch.setenv("PAGER", disabled)
+        assert cli._pager_command() is None
+    monkeypatch.delenv("PAGER")
+    assert cli._pager_command() == ["less"]
+    monkeypatch.setenv("TERM", "dumb")
+    assert cli._pager_command() is None
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    assert cli._pager_command() is None
+
+
+def test_system_pager_keeps_colour_and_respects_less(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fmind import cli
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr("subprocess.run", lambda command, **kwargs: calls.append({"command": command, **kwargs}))
+    monkeypatch.delenv("LESS", raising=False)
+    cli._SystemPager(["less"]).show("text")
+    monkeypatch.setenv("LESS", "-S")
+    cli._SystemPager(["less"]).show("more")
+    assert [call["env"]["LESS"] for call in calls] == ["FRX", "-S"]
+    assert calls[0]["command"] == ["less"]
+    assert calls[0]["input"] == b"text"
+
+
+def test_read_pages_on_an_interactive_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fmind import cli
+
+    shown: list[str] = []
+    monkeypatch.setattr(cli, "_pager_command", lambda: ["less"])
+    monkeypatch.setattr(cli._SystemPager, "show", lambda self, content: shown.append(content))
+    result = runner.invoke(app, ["--color", "read", "newer"])
+    assert result.exit_code == 0, result.output
+    assert len(shown) == 1
+    assert "The body of the article." in shown[0]
+    assert "The body of the article." not in result.stdout

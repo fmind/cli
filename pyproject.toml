@@ -14,7 +14,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Topic :: Utilities",
 ]
-dependencies = ["typer>=0.15", "rich>=13.9"]
+dependencies = ["typer>=0.26", "rich>=13.9"]
 
 [project.urls]
 Homepage = "https://www.fmind.dev/"

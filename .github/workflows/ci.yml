@@ -54,3 +54,20 @@ jobs:
         env:
           PYTHON_VERSION: ${{ matrix.python }}
         run: uv run --locked --all-groups --all-extras --python "$PYTHON_VERSION" pytest
+  lowest:
+    name: Lowest direct dependencies
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install mise system
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache: true
+      # The published wheel promises these floors; the lockfile only proves the latest
+      # versions. Re-resolving rewrites uv.lock on this throwaway runner only.
+      - name: Run the test suite at the declared lower bounds
+        run: uv run --resolution lowest-direct --all-groups --all-extras --python 3.11 pytest

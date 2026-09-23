@@ -369,7 +369,7 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2,<3" },
     { name = "mcp-types", marker = "extra == 'mcp'", specifier = ">=2.2,<3" },
     { name = "rich", specifier = ">=13.9" },
-    { name = "typer", specifier = ">=0.15" },
+    { name = "typer", specifier = ">=0.26" },
 ]
 provides-extras = ["mcp"]
 
