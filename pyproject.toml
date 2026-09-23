@@ -1,7 +1,7 @@
 # https://packaging.python.org/en/latest/specifications/pyproject-toml/
 [project]
 name = "fmind"
-version = "2.0.0"
+version = "2.0.1"
 description = "Read Médéric Hurier's (Fmind) portfolio from the terminal."
 readme = "README.md"
 license = "MIT"
