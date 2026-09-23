@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.0] - 2026-09-23
+
+### 🚀 Features
+
+- _(cli)_ [**breaking**] Group project JSON and keep links readable
+
+### 🧹 Miscellaneous
+
+- Format workflows and sort gitignore
+
 ## [1.0.0] - 2026-09-19
 
 ### 🚀 Features
