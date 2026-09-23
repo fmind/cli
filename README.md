@@ -112,7 +112,7 @@ For a host that accepts JSON configuration:
 }
 ```
 
-`fmind mcp` connects to `https://www.fmind.dev/mcp` using Streamable HTTP and forwards the website's tools, resources, and prompts over stdio. The website owns their names, schemas, and content. Set `FMIND_PROFILE_URL` in the host's environment to use `/mcp` on another website origin. No local data or response cache is used. Requests have a 15-second deadline and remote HTTP responses are limited to 8 MiB.
+`fmind mcp` connects to `https://www.fmind.dev/mcp` using Streamable HTTP and forwards the website's tools, resources, and prompts over stdio. The website owns their names, schemas, and content. Set `FMIND_PROFILE_URL` in the host's environment to use `/mcp` on another website origin. No local data or response cache is used. The website answers MCP POST requests with JSON; GET/HEAD return `405` with `Allow: POST` because notification streams are not offered. Use `/health` for uptime probes. Requests have a 15-second deadline and remote HTTP responses are limited to 8 MiB.
 
 Stdout carries only MCP messages; startup errors go to stderr. Portfolio output flags such as `--json` do not apply to `mcp`. The bridge forwards read-only request/response operations; subscriptions and server-initiated sampling or elicitation are not advertised.
 
