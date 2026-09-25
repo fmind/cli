@@ -5,7 +5,10 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import queue
 import re
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -80,27 +83,63 @@ def origin_url(path: str, *, profile_url: str | None = None) -> str:
 
 
 def _download(url: str, accept: str = "application/json") -> bytes:
-    """Fetch a document over HTTP(S) with an explicit timeout and size bound."""
+    """Fetch a document within a wall-clock deadline, including DNS and headers."""
     _http_url(url)
+    deadline = time.monotonic() + TIMEOUT_SECONDS
+    result: queue.Queue[bytes | Exception] = queue.Queue(maxsize=1)
+
+    def fetch() -> None:
+        try:
+            result.put(_fetch(url, accept, deadline))
+        except Exception as error:
+            result.put(error)
+
+    # DNS and urllib's header reads cannot be cancelled portably. A daemon does
+    # not hold the CLI open after the deadline; body reads stop cooperatively.
+    threading.Thread(target=fetch, daemon=True).start()
+    try:
+        outcome = result.get(timeout=max(0.0, deadline - time.monotonic()))
+    except queue.Empty as error:
+        raise FmindError("the website request timed out; check your connection and FMIND_PROFILE_URL") from error
+    if isinstance(outcome, Exception):
+        raise outcome
+    return outcome
+
+
+def _fetch(url: str, accept: str, deadline: float) -> bytes:
+    """Perform bounded I/O; never print or mutate caller state from the worker."""
     # Ask intermediary HTTP caches to revalidate too; no local copy is kept.
     headers = {"User-Agent": USER_AGENT, "Accept": accept, "Cache-Control": "no-cache"}
     try:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("website request deadline exceeded")
         request = urllib.request.Request(url, headers=headers)  # noqa: S310
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310
-            payload = response.read(MAX_BYTES + 1)
+            payload = bytearray()
+            while len(payload) <= MAX_BYTES:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("website request deadline exceeded")
+                # read() can wait indefinitely for a slowly progressing body.
+                # read1() returns after at most one underlying read.
+                chunk = response.read1(min(64 * 1024, MAX_BYTES + 1 - len(payload)))
+                if not chunk:
+                    break
+                payload.extend(chunk)
             length = response.headers.get("Content-Length")
             if len(payload) <= MAX_BYTES and length is not None and len(payload) != int(length):
-                raise http.client.IncompleteRead(payload)
+                raise http.client.IncompleteRead(bytes(payload))
     except urllib.error.HTTPError as error:
         msg = f"the website returned HTTP {error.code}"
         raise FmindError(msg) from error
+    except TimeoutError as error:
+        raise FmindError("the website request timed out; check your connection and FMIND_PROFILE_URL") from error
     except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as error:
         msg = "could not read the website; check your connection and FMIND_PROFILE_URL"
         raise FmindError(msg) from error
     if len(payload) > MAX_BYTES:
         msg = f"the website returned more than {MAX_BYTES} bytes"
         raise FmindError(msg)
-    return payload
+    return bytes(payload)
 
 
 def _validate(value: object, shape: object, path: str) -> None:
@@ -125,6 +164,21 @@ def _parse_profile(payload: bytes) -> dict[str, Any]:
         document = json.loads(payload)
     except (ValueError, RecursionError) as error:
         raise FmindError("the profile endpoint did not return JSON") from error
+    # Python's JSON decoder accepts lone surrogates. Check keys and future fields
+    # too: JSON output forwards them even when the renderer does not consume them.
+    pending = [document]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise FmindError("the profile endpoint returned invalid Unicode") from error
+        elif isinstance(value, dict):
+            pending.extend(value)
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
     _validate(document, PROFILE_SHAPE, "profile")
     links = document["thesis"].get("links")
     if links is not None:

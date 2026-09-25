@@ -5,9 +5,10 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import threading
 import urllib.error
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -222,3 +223,83 @@ def test_rejects_terminal_controls(document: dict[str, Any], control: str) -> No
         api._parse_profile(json.dumps(document).encode())
     with pytest.raises(api.FmindError, match="terminal control characters"):
         api._parse_markdown(f"# Article\n{control}".encode())
+
+
+@pytest.mark.parametrize("location", ["name", "extra-value", "extra-key", "nested"])
+@pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
+def test_rejects_invalid_unicode_everywhere(document: dict[str, Any], location: str, surrogate: str) -> None:
+    if location == "name":
+        document["metadata"]["name"] = surrogate
+    elif location == "extra-value":
+        document["metadata"]["future"] = surrogate
+    elif location == "extra-key":
+        document["metadata"][surrogate] = "future"
+    else:
+        document["future"] = [{"values": [surrogate]}]
+    with pytest.raises(api.FmindError, match="invalid Unicode") as caught:
+        api._parse_profile(json.dumps(document).encode())
+    assert isinstance(caught.value.__cause__, UnicodeEncodeError)
+
+
+def test_accepts_valid_surrogate_pairs(document: dict[str, Any]) -> None:
+    document["metadata"]["name"] = "Example 🐍"
+    assert api._parse_profile(json.dumps(document).encode()) == document
+
+
+@pytest.mark.parametrize("blocked_phase", ["open", "body"])
+def test_total_deadline_bounds_blocking_io(monkeypatch: pytest.MonkeyPatch, blocked_phase: str) -> None:
+    release = threading.Event()
+    closed = threading.Event()
+
+    class Response(io.BytesIO):
+        headers: ClassVar[dict[str, str]] = {}
+
+        def read1(self, size: int = -1) -> bytes:
+            if blocked_phase == "body":
+                release.wait(5)
+            return super().read1(size)
+
+        def close(self) -> None:
+            super().close()
+            closed.set()
+
+    def open_url(*args: object, **kwargs: object) -> Response:
+        if blocked_phase == "open":
+            release.wait(5)
+        return Response(b"# Article")
+
+    monkeypatch.setattr("urllib.request.urlopen", open_url)
+    monkeypatch.setattr(api, "TIMEOUT_SECONDS", 0.05)
+    try:
+        with pytest.raises(api.FmindError, match="timed out"):
+            api._download("https://example.test/article.md")
+        assert not release.is_set(), "the caller returned before blocked I/O completed"
+    finally:
+        release.set()
+        assert closed.wait(5), "the worker must close the response once blocking I/O returns"
+
+
+def test_worker_stops_a_progressing_body_at_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 0.0
+
+    class Response(io.BytesIO):
+        headers: ClassVar[dict[str, str]] = {}
+
+        def read1(self, size: int = -1) -> bytes:
+            nonlocal now
+            now += 0.4
+            return super().read1(1)
+
+    response = Response(b"a slowly progressing response")
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: response)
+    monkeypatch.setattr(api.time, "monotonic", lambda: now)
+    with pytest.raises(api.FmindError, match="timed out") as caught:
+        api._fetch("https://example.test/article.md", "text/markdown", 1.0)
+    assert isinstance(caught.value.__cause__, TimeoutError)
+    assert response.closed
+
+
+def test_expired_worker_does_not_start_network_io() -> None:
+    # The autouse network boundary fails if a delayed worker starts a request.
+    with pytest.raises(api.FmindError, match="timed out"):
+        api._fetch("https://example.test/article.md", "text/markdown", float("-inf"))

@@ -16,7 +16,7 @@ from rich.console import Console, RenderableType
 from rich.pager import Pager
 
 from fmind import __version__, articles, render
-from fmind.api import FmindError, load_article, load_profile
+from fmind.api import CONTROL_PATTERN, FmindError, load_article, load_profile
 
 app = typer.Typer(
     name="fmind",
@@ -58,6 +58,8 @@ def main(
 
 def _fail(message: str) -> typer.Exit:
     """Report a clear one-line error on stderr and end the command."""
+    message = CONTROL_PATTERN.sub(lambda match: ascii(match.group())[1:-1], message)
+    message = message.encode("utf-8", errors="backslashreplace").decode("utf-8")
     typer.echo(f"fmind: {' '.join(message.split())}", err=True)
     return typer.Exit(code=1)
 
@@ -80,7 +82,12 @@ class _SystemPager(Pager):
         # Like Git: respect an explicit LESS, otherwise keep colours (-R), skip
         # paging for short output (-F), and leave the text on screen (-X).
         environment = {**os.environ, "LESS": os.environ.get("LESS", "FRX")}
-        subprocess.run(self.command, input=content.encode(), env=environment, check=False)  # noqa: S603
+        try:
+            subprocess.run(  # noqa: S603
+                self.command, input=content.encode(), env=environment, stderr=subprocess.DEVNULL, check=True
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise FmindError("could not display the article with PAGER; check PAGER or use PAGER=cat") from error
 
 
 def _pager_command() -> list[str] | None:
@@ -119,8 +126,11 @@ def _emit(ctx: typer.Context, body: RenderableType, payload: Any, *, as_json: bo
     if command is None:
         out.print(body, crop=False)
         return
-    with out.pager(pager=_SystemPager(command), styles=True):
-        out.print(body, crop=False)
+    try:
+        with out.pager(pager=_SystemPager(command), styles=True):
+            out.print(body, crop=False)
+    except FmindError as error:
+        raise _fail(str(error)) from error
 
 
 @app.command()

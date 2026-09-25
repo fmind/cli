@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from importlib.metadata import version
 from typing import Any
 
@@ -128,6 +129,26 @@ def test_read_reports_an_unknown_slug() -> None:
     assert result.exit_code == 1
     assert "fmind search" in result.output
     assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("slug", ["\x1b]52;c;ZXhhbXBsZQ==\x07", "\x9b2J", "\x00", "\ud800"])
+def test_unknown_slug_errors_escape_unsafe_characters(slug: str) -> None:
+    result = runner.invoke(app, ["read", slug])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert len(result.stderr.splitlines()) == 1
+    assert not api.CONTROL_PATTERN.search(result.stderr)
+    assert slug.encode("unicode_escape").decode() in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("args", [["whoami"], ["whoami", "--json"]])
+def test_invalid_unicode_reports_a_one_line_error(document: dict[str, Any], args: list[str]) -> None:
+    document["metadata"]["name"] = "Invalid \ud800 name"
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "fmind: the profile endpoint returned invalid Unicode\n"
 
 
 def test_read_reports_an_ambiguous_slug(document: dict[str, Any]) -> None:
@@ -512,6 +533,26 @@ def test_system_pager_keeps_colour_and_respects_less(monkeypatch: pytest.MonkeyP
     assert [call["env"]["LESS"] for call in calls] == ["FRX", "-S"]
     assert calls[0]["command"] == ["less"]
     assert calls[0]["input"] == b"text"
+    assert calls[0]["check"] is True
+    assert calls[0]["stderr"] == subprocess.DEVNULL
+
+
+@pytest.mark.parametrize("error", [OSError("private launch diagnostic"), subprocess.CalledProcessError(1, "pager")])
+def test_pager_failures_are_safe_errors(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    from fmind import cli
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(cli, "_pager_command", lambda: ["pager"])
+    monkeypatch.setattr("subprocess.run", fail)
+    result = runner.invoke(app, ["--color", "read", "newer"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "fmind: could not display the article with PAGER; check PAGER or use PAGER=cat\n"
+    with pytest.raises(api.FmindError) as caught:
+        cli._SystemPager(["pager"]).show("text")
+    assert caught.value.__cause__ is error
 
 
 def test_read_pages_on_an_interactive_terminal(monkeypatch: pytest.MonkeyPatch) -> None:

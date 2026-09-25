@@ -12,7 +12,7 @@ Every command renders a document the website already publishes — the portfolio
 
 This package carries no copy of the portfolio and needs **no release for content updates**: new articles, a renewed certification or a new engagement appear on the next run. Removing or changing fields that the CLI renders can require a client update; the live compatibility workflow detects those breaks.
 
-Every command fetches from the website and asks HTTP caches to revalidate. There is no local cache and no `--refresh` option. An internet connection is required: if the website cannot be read, the command reports an error instead of showing stale information.
+Every command fetches from the website and asks HTTP caches to revalidate. There is no local cache and no `--refresh` option. Each portfolio download has a 15-second total deadline, including connection setup and response reading, and an 8 MiB response limit. An internet connection is required: if the website cannot be read, the command reports an error instead of showing stale information.
 
 ## Commands
 
@@ -50,7 +50,7 @@ fmind search "agent security"
 fmind search --tag MLOps --limit 3
 ```
 
-`fmind read` takes a slug, or enough of one to be unambiguous, and prints the article. In an interactive terminal it pages through `$PAGER` (default `less`, with `LESS=FRX` unless you set `LESS`), so short articles print directly; `PAGER=cat` disables paging. Use `--raw` for the Markdown source.
+`fmind read` takes a slug, or enough of one to be unambiguous, and prints the article. In an interactive terminal it pages through `$PAGER` (default `less`, with `LESS=FRX` unless you set `LESS`), so short articles print directly; `PAGER=cat` disables paging. If the selected pager cannot start or exits unsuccessfully, the command reports an error; retry with `PAGER=cat`. Use `--raw` for the Markdown source.
 
 ```bash
 slug="$(fmind articles --limit 1 --json | jq -r '.[0].slug')"
