@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.2] - 2026-09-25
+
+### 🐛 Bug Fixes
+
+- _(cli)_ Bound downloads and harden output failures
+
+### 🧹 Miscellaneous
+
+- _(deps)_ Upgrade uv and compatible Python dependencies
+
 ## [2.0.1] - 2026-09-23
 
 ### 📚 Documentation
