@@ -23,7 +23,7 @@ Entries are in ASCII order: dotfiles, capitalized files, then lowercase paths.
 - `.gitignore` — local and generated exclusions.
 - `.python-version` — selected Python runtime version.
 - `AGENTS.md` — agent instructions and repository invariants.
-- `CLAUDE.md` — Claude entry point importing this file.
+- `CHANGELOG.md` — release notes per version.
 - `LICENSE` — MIT license.
 - `README.md` — human install, commands, and development.
 - `dprint.json` — JSON, Markdown, TOML, and YAML formatting.
