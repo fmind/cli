@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 100 # check:leaks scans the last 100 commits; a shallower clone hides them
           persist-credentials: false # no step pushes back to the repository
       - name: Install mise system
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           cache: true
       - name: Run canonical gate
@@ -45,7 +45,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install mise system
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           cache: true
       # The gate runs on the pinned interpreter; this proves the `requires-python` floor
@@ -64,7 +64,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install mise system
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           cache: true
       # The published wheel promises these floors; the lockfile only proves the latest
