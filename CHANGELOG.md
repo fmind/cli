@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.3] - 2026-10-06
+
+### 🐛 Bug Fixes
+
+- _(cli)_ Escape terminal controls and reject non-finite numbers in JSON
+
+### 📚 Documentation
+
+- _(readme)_ Trim internal architecture and compatibility details
+- _(agents)_ Drop the CLAUDE.md shim and list the changelog
+
+### 🧹 Miscellaneous
+
+- _(deps)_ Upgrade mise tools to latest
+- _(deps)_ Upgrade python dependencies to latest
+- _(deps)_ Upgrade github actions to latest
+- _(deps)_ Upgrade dprint plugins to latest
+
 ## [2.0.2] - 2026-09-25
 
 ### 🐛 Bug Fixes
