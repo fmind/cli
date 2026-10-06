@@ -58,7 +58,9 @@ def test_environment_is_read_at_call_time(monkeypatch: pytest.MonkeyPatch, docum
     ]
 
 
-@pytest.mark.parametrize("payload", [b"<html>nope</html>", b"\xff", b"[" * 2000])
+@pytest.mark.parametrize(
+    "payload", [b"<html>nope</html>", b"\xff", b"[" * 2000, b'{"metadata": NaN}', b'{"metadata": -Infinity}']
+)
 def test_rejects_invalid_json(payload: bytes) -> None:
     with pytest.raises(api.FmindError, match="did not return JSON"):
         api._parse_profile(payload)

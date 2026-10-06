@@ -233,6 +233,14 @@ def test_json_output_is_machine_readable(section: str, position: str) -> None:
     assert result.stderr == ""
 
 
+def test_json_escapes_controls_in_unvalidated_fields(document: dict[str, Any]) -> None:
+    document["metadata"]["future"] = "x\x9b2J\x7f"
+    result = runner.invoke(app, ["whoami", "--json"])
+    assert result.exit_code == 0, result.output
+    assert not api.CONTROL_PATTERN.search(result.stdout)
+    assert json.loads(result.stdout)["metadata"]["future"] == "x\x9b2J\x7f"
+
+
 def test_json_read_carries_the_markdown() -> None:
     payload = json.loads(runner.invoke(app, ["--json", "read", "newer"]).output)
     assert payload["slug"] == "newer"

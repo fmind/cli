@@ -158,10 +158,15 @@ def _validate(value: object, shape: object, path: str) -> None:
         raise FmindError(f"the profile endpoint returned an invalid portfolio document at {path}")
 
 
+def _reject_constant(name: str) -> None:
+    """Refuse NaN and Infinity: they are not JSON, so `--json` could not forward them."""
+    raise ValueError(name)
+
+
 def _parse_profile(payload: bytes) -> dict[str, Any]:
     """Decode the portfolio document, rejecting anything that is not one."""
     try:
-        document = json.loads(payload)
+        document = json.loads(payload, parse_constant=_reject_constant)
     except (ValueError, RecursionError) as error:
         raise FmindError("the profile endpoint did not return JSON") from error
     # Python's JSON decoder accepts lone surrogates. Check keys and future fields

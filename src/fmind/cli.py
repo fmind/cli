@@ -116,7 +116,10 @@ def _write(text: str) -> None:
 def _emit(ctx: typer.Context, body: RenderableType, payload: Any, *, as_json: bool, page: bool = False) -> None:
     """Print either the rendered section or its JSON data."""
     if as_json or ctx.find_root().params["as_json"]:
-        _write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        # json.dumps escapes C0 controls but not DEL or C1 (such as CSI); fields the
+        # renderer does not validate still reach the terminal, so escape those too.
+        text = json.dumps(payload, ensure_ascii=False, indent=2)
+        _write(CONTROL_PATTERN.sub(lambda match: f"\\u{ord(match.group()):04x}", text) + "\n")
         return
     out = _console(ctx)
     if not out.is_terminal:
