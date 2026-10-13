@@ -151,6 +151,19 @@ def test_invalid_unicode_reports_a_one_line_error(document: dict[str, Any], args
     assert result.stderr == "fmind: the profile endpoint returned invalid Unicode\n"
 
 
+@pytest.mark.parametrize("args", [["whoami"], ["whoami", "--json"]])
+def test_overflowing_json_numbers_report_a_one_line_error(
+    document: dict[str, Any], args: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document["metadata"]["future"] = "NUMBER"
+    payload = json.dumps(document).replace('"NUMBER"', "1e999").encode()
+    monkeypatch.setattr(api, "_download", lambda *args: payload)
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "fmind: the profile endpoint returned a non-finite number\n"
+
+
 def test_read_reports_an_ambiguous_slug(document: dict[str, Any]) -> None:
     document["articles"].append(dict(document["articles"][0], slug="newer-still"))
     result = runner.invoke(app, ["read", "new"])
@@ -474,6 +487,21 @@ def test_long_links_stay_on_one_line(document: dict[str, Any]) -> None:
     result = runner.invoke(app, ["--no-color", "hire"], terminal_width=40)
     assert result.exit_code == 0, result.output
     assert url in result.stdout.splitlines()
+
+
+@pytest.mark.parametrize("command", [[], ["whoami"]])
+@pytest.mark.parametrize("color", ["--color", "--no-color"])
+def test_card_links_are_not_cropped(
+    document: dict[str, Any], command: list[str], color: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COLUMNS", "40")
+    document["metadata"]["email"] = "contact@" + "a" * 90 + ".test"
+    document["metadata"]["site_url"] = "https://example.test/" + "a" * 100
+    result = runner.invoke(app, [color, *command], terminal_width=40)
+    assert result.exit_code == 0, result.output
+    visible = Text.from_ansi(result.stdout).plain
+    for field in ("email", "site_url"):
+        assert any(document["metadata"][field] in line for line in visible.splitlines())
 
 
 class _ClosedPipe:

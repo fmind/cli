@@ -66,6 +66,23 @@ def test_rejects_invalid_json(payload: bytes) -> None:
         api._parse_profile(payload)
 
 
+@pytest.mark.parametrize("number", ["1e999", "-1e999"])
+@pytest.mark.parametrize("location", ["metadata", "nested"])
+def test_rejects_overflowing_json_numbers(document: dict[str, Any], number: str, location: str) -> None:
+    if location == "metadata":
+        document["metadata"]["future"] = "NUMBER"
+    else:
+        document["future"] = [{"values": ["NUMBER"]}]
+    payload = json.dumps(document).replace('"NUMBER"', number).encode()
+    with pytest.raises(api.FmindError, match="non-finite number"):
+        api._parse_profile(payload)
+
+
+def test_accepts_finite_json_numbers(document: dict[str, Any]) -> None:
+    document["future"] = [1.5, -1e308, 10**100]
+    assert api._parse_profile(json.dumps(document).encode()) == document
+
+
 @pytest.mark.parametrize("payload", [b"null", b"[]", b'{"metadata": {}}'])
 def test_rejects_non_portfolio_documents(payload: bytes) -> None:
     with pytest.raises(api.FmindError, match="portfolio document"):

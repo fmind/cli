@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import math
 import os
 import queue
 import re
@@ -169,11 +170,14 @@ def _parse_profile(payload: bytes) -> dict[str, Any]:
         document = json.loads(payload, parse_constant=_reject_constant)
     except (ValueError, RecursionError) as error:
         raise FmindError("the profile endpoint did not return JSON") from error
-    # Python's JSON decoder accepts lone surrogates. Check keys and future fields
-    # too: JSON output forwards them even when the renderer does not consume them.
+    # Check keys and future fields too: JSON output forwards them even when the
+    # renderer does not consume them. The decoder accepts surrogates and can turn
+    # finite JSON literals such as 1e999 into infinity.
     pending = [document]
     while pending:
         value = pending.pop()
+        if isinstance(value, float) and not math.isfinite(value):
+            raise FmindError("the profile endpoint returned a non-finite number")
         if isinstance(value, str):
             try:
                 value.encode("utf-8")

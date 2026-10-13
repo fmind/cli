@@ -87,16 +87,22 @@ def whoami(doc: dict[str, Any]) -> RenderableType:
             status.append("\n")
         status.append(service["title"], style="bold")
         status.append(f" — {service['badge']}")
-    return _rows(
-        [
-            ("Name", Text(f"{meta['name']} ({meta['alternate_name']})", style="bold")),
-            ("Role", Text(meta["job_title"])),
-            ("Headline", Text(meta["headline_primary"])),
-            ("Experience", mission),
-            ("Status", status),
-            ("Contact", _link(meta["email"])),
-            ("Website", _link(meta["site_url"])),
-        ]
+    return Group(
+        _rows(
+            [
+                ("Name", Text(f"{meta['name']} ({meta['alternate_name']})", style="bold")),
+                ("Role", Text(meta["job_title"])),
+                ("Headline", Text(meta["headline_primary"])),
+                ("Experience", mission),
+                ("Status", status),
+            ]
+        ),
+        # Table cells crop even no-wrap links. Keep these outside the grid,
+        # with the same 11-character label and two-space gap.
+        *(
+            Text.assemble((f"{label:<13}", ACCENT), _link(value), no_wrap=True, overflow="ignore")
+            for label, value in (("Contact", meta["email"]), ("Website", meta["site_url"]))
+        ),
     )
 
 
