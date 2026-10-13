@@ -21,16 +21,21 @@ from fmind.api import MAX_BYTES, TIMEOUT_SECONDS, USER_AGENT, FmindError, origin
 
 
 class _BoundedStream(httpx2.AsyncByteStream):
-    def __init__(self, stream: httpx2.AsyncByteStream) -> None:
+    def __init__(self, stream: httpx2.AsyncByteStream, deadline: float) -> None:
         self.stream = stream
+        self.deadline = deadline
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         size = 0
-        async for chunk in self.stream:
-            size += len(chunk)
-            if size > MAX_BYTES:
-                raise FmindError("the remote MCP response exceeded the size limit")
-            yield chunk
+        try:
+            async with asyncio.timeout_at(self.deadline):
+                async for chunk in self.stream:
+                    size += len(chunk)
+                    if size > MAX_BYTES:
+                        raise FmindError("the remote MCP response exceeded the size limit")
+                    yield chunk
+        except TimeoutError as error:
+            raise httpx2.ReadTimeout("the remote MCP response exceeded its deadline") from error
 
     async def aclose(self) -> None:
         await self.stream.aclose()
@@ -38,13 +43,20 @@ class _BoundedStream(httpx2.AsyncByteStream):
 
 class _BoundedTransport(httpx2.AsyncHTTPTransport):
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
-        response = await super().handle_async_request(request)
+        # HTTPX read timeouts restart for every chunk. A legacy MCP server may
+        # ignore cancellation, so bound the entire HTTP exchange independently.
+        deadline = asyncio.get_running_loop().time() + TIMEOUT_SECONDS
+        try:
+            async with asyncio.timeout_at(deadline):
+                response = await super().handle_async_request(request)
+        except TimeoutError as error:
+            raise httpx2.ReadTimeout("the remote MCP response exceeded its deadline", request=request) from error
         if response.headers.get("content-encoding", "identity") != "identity":
             await response.aclose()
             raise FmindError("the remote MCP server ignored the uncompressed response requirement")
         if not isinstance(response.stream, httpx2.AsyncByteStream):
             raise FmindError("the remote MCP transport returned an invalid stream")
-        response.stream = _BoundedStream(response.stream)
+        response.stream = _BoundedStream(response.stream, deadline)
         return response
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from unittest.mock import AsyncMock
 
@@ -10,6 +11,7 @@ import httpx2
 import mcp_types as types
 import pytest
 from mcp import Client, StdioServerParameters
+from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
 from typer.testing import CliRunner
 
@@ -109,7 +111,7 @@ def test_response_bound(monkeypatch: pytest.MonkeyPatch) -> None:
                 yield b"def"
 
         monkeypatch.setattr(mcp, "MAX_BYTES", 5)
-        stream = mcp._BoundedStream(Chunks())
+        stream = mcp._BoundedStream(Chunks(), asyncio.get_running_loop().time() + 1)
         with pytest.raises(FmindError, match="size limit"):
             _ = [part async for part in stream]
         await stream.aclose()
@@ -134,6 +136,86 @@ def test_http_transport_bound(monkeypatch: pytest.MonkeyPatch, encoding: str) ->
         assert response.is_closed
 
     asyncio.run(run())
+
+
+def test_http_headers_have_a_total_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        stopped = asyncio.Event()
+
+        async def stalled(*args: object) -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+        monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", stalled)
+        monkeypatch.setattr(mcp, "TIMEOUT_SECONDS", 0.02)
+        async with httpx2.AsyncClient(transport=mcp._BoundedTransport()) as client:
+            async with asyncio.timeout(1):
+                with pytest.raises(httpx2.ReadTimeout):
+                    await client.get("https://example.test/mcp")
+                assert stopped.is_set()
+
+    asyncio.run(run())
+
+
+def test_legacy_http_body_stops_after_request_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    stopped = asyncio.Event()
+
+    async def run() -> None:
+        class Endless(httpx2.AsyncByteStream):
+            async def __aiter__(self):
+                while True:
+                    yield b" "
+                    await asyncio.sleep(0.005)
+
+            async def aclose(self) -> None:
+                stopped.set()
+
+        async def handle(_transport: object, request: httpx2.Request) -> httpx2.Response:
+            body = json.loads(request.content)
+            if body["method"] == "initialize":
+                return httpx2.Response(
+                    200,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {"tools": {}},
+                            "serverInfo": {"name": "example", "version": "1"},
+                        },
+                    },
+                )
+            if body["method"].startswith("notifications/"):
+                return httpx2.Response(202)
+            return httpx2.Response(200, headers={"content-type": "application/json"}, stream=Endless())
+
+        monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", handle)
+        monkeypatch.setattr(mcp, "TIMEOUT_SECONDS", 0.03)
+        async with (
+            httpx2.AsyncClient(transport=mcp._BoundedTransport()) as http,
+            Client(
+                streamable_http_client("https://example.test/mcp", http_client=http),
+                mode="legacy",
+                cache=None,
+                read_timeout_seconds=1,
+            ) as remote,
+            Client(mcp.create_bridge(remote), cache=None) as client,
+        ):
+            with pytest.raises(MCPError):
+                await client.list_tools()
+            # The caller timing out must not leave a slow response running until
+            # bridge shutdown, even when a legacy server ignores cancellation.
+            await asyncio.wait_for(stopped.wait(), 0.5)
+
+    # The SDK may close its task group when the legacy POST fails. Its transport
+    # timeout is expected; the test's wait_for TimeoutError must still fail.
+    try:
+        asyncio.run(run())
+    except* httpx2.ReadTimeout:
+        pass
+    assert stopped.is_set()
 
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
