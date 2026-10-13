@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file.
 - _(api)_ Reject overflowing JSON numbers before they can become invalid `Infinity` output
 - _(cli)_ Keep contact and website links complete in narrow identity cards
 - _(mcp)_ Bound HTTP headers and bodies by one deadline, including legacy responses that ignore cancellation
+- _(build)_ Include the MIT license text in wheels and source distributions
 
 ### 🧪 Testing
 

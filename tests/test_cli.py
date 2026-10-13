@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from importlib.metadata import version
+from importlib.metadata import distribution, version
 from typing import Any
 
 import pytest
@@ -15,6 +15,12 @@ from fmind import api
 from fmind.cli import app
 
 runner = CliRunner()
+
+
+def test_installed_metadata_declares_the_license() -> None:
+    package = distribution("fmind")
+    assert package.metadata.get_all("License-File") == ["LICENSE"]
+
 
 SECTIONS = [
     "whoami",
