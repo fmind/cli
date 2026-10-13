@@ -122,7 +122,7 @@ mise run smoke     # exercise every command against the live site
 mise run all       # format, check, test, build — the gate CI runs
 ```
 
-The pre-commit hook runs checks without changing or staging files; run `mise run format` before committing. The pre-push hook runs the offline tests. CI runs the full gate on the pinned Python, tests Python 3.11–3.13 for compatibility, and tests the declared dependency floors with `--resolution lowest-direct` on Python 3.11.
+The pre-commit hook runs checks without changing or staging files; run `mise run format` before committing. The pre-push hook runs the offline tests. CI runs the full gate on the pinned Python, tests Python 3.11–3.14 for compatibility, and tests the declared dependency floors with `--resolution lowest-direct` on Python 3.11.
 
 A release tag must match the version in `pyproject.toml` (for example, `v0.1.0`). CD runs the same full gate for that tag and checks the live commands before publishing through PyPI Trusted Publishing. The live smoke check is a release check, not a pull-request gate.
 
