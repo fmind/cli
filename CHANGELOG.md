@@ -18,7 +18,7 @@ All notable changes to this project are documented in this file.
 
 ### 🧹 Miscellaneous
 
-- _(deps)_ Upgrade the pinned tools, Python dependencies, build backend, and GitHub Actions; test Python 3.11–3.15
+- _(deps)_ Upgrade the pinned tools, Python dependencies, build backend, and GitHub Actions; test Python 3.11–3.14
 
 ## [2.0.3] - 2026-10-06
 
