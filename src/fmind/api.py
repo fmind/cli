@@ -77,9 +77,14 @@ def article_url(slug: str, *, profile_url: str | None = None) -> str:
     return origin_url(f"/articles/{slug}.md", profile_url=profile_url)
 
 
+def _profile_url() -> str:
+    """Return the configured profile endpoint, read at call time."""
+    return os.environ.get("FMIND_PROFILE_URL", PROFILE_URL)
+
+
 def origin_url(path: str, *, profile_url: str | None = None) -> str:
     """Resolve a website endpoint on the configured profile origin."""
-    parts = _http_url(profile_url if profile_url is not None else os.environ.get("FMIND_PROFILE_URL", PROFILE_URL))
+    parts = _http_url(profile_url if profile_url is not None else _profile_url())
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
@@ -210,8 +215,7 @@ def _parse_markdown(payload: bytes) -> str:
 
 def load_profile(*, url: str | None = None) -> dict[str, Any]:
     """Return the portfolio document behind every section command."""
-    endpoint = url if url is not None else os.environ.get("FMIND_PROFILE_URL", PROFILE_URL)
-    return _parse_profile(_download(endpoint))
+    return _parse_profile(_download(url if url is not None else _profile_url()))
 
 
 def load_article(slug: str, *, profile_url: str | None = None) -> str:
