@@ -25,6 +25,8 @@ jobs:
           persist-credentials: false # the scanner only reads the checkout
       - name: Install mise system
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.10.21 # pinned mise; bump deliberately with mise.lock tooling
       - name: Scan complete Git history
         run: gitleaks git --redact=100 --verbose
       - name: Audit locked dependencies

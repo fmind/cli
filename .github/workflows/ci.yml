@@ -23,6 +23,7 @@ jobs:
       - name: Install mise system
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
+          version: 2026.10.21 # pinned mise; bump deliberately with mise.lock tooling
           cache: true
       - name: Run canonical gate
         run: mise run all
@@ -47,6 +48,7 @@ jobs:
       - name: Install mise system
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
+          version: 2026.10.21 # pinned mise; bump deliberately with mise.lock tooling
           cache: true
       # The gate runs on the pinned interpreter; this proves the `requires-python` floor
       # the published wheel advertises, on the oldest versions it claims to support.
@@ -66,6 +68,7 @@ jobs:
       - name: Install mise system
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
+          version: 2026.10.21 # pinned mise; bump deliberately with mise.lock tooling
           cache: true
       # The published wheel promises these floors; the lockfile only proves the latest
       # versions. Re-resolving rewrites uv.lock on this throwaway runner only.
