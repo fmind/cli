@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### 🐛 Bug Fixes
 
-- _(api)_ Reject overflowing JSON numbers before they can become invalid `Infinity` output
+- _(api)_ Read the profile endpoint in one place and reject overflowing JSON numbers before they can become invalid `Infinity` output
 - _(cli)_ Keep contact and website links complete in narrow identity cards
 - _(mcp)_ Bound HTTP headers and bodies by one deadline, including legacy responses that ignore cancellation
 - _(build)_ Include the MIT license text in wheels and source distributions
@@ -14,11 +14,10 @@ All notable changes to this project are documented in this file.
 ### 🧪 Testing
 
 - _(smoke)_ Check every MCP catalog page and bare portfolio invocations
-- _(smoke)_ Supply default parameters to the website's MCP context cost calculator
 
 ### 🧹 Miscellaneous
 
-- _(deps)_ Upgrade the pinned tools, Python dependencies, build backend, and GitHub Actions; test Python 3.11–3.14
+- _(deps)_ Upgrade the pinned tools, Python dependencies, build backend, and GitHub Actions; test Python 3.11–3.14 and keep Dependabot on security updates only
 
 ## [2.0.3] - 2026-10-06
 

@@ -59,7 +59,7 @@ async def smoke_mcp() -> None:
                 if not posts:
                     raise RuntimeError("the website lists no article for the MCP read check")
                 arguments = {"slug": posts[0]["slug"]}
-            elif tool.name in {"compare_llm_hosting", "compare_mcp_context_cost"}:
+            elif tool.name == "compare_llm_hosting":
                 arguments = {"parameters": {}}
             print(f"check MCP tools/call {tool.name}", flush=True)
             result = await client.call_tool(tool.name, arguments)

@@ -42,7 +42,7 @@ def test_mcp_checks_article_and_calculator_with_live_inputs(remote: AsyncMock) -
         ("search_articles", {"query": "compatibility", "limit": 1}),
         ("get_article", {"slug": "fresh-article"}),
         ("compare_llm_hosting", {"parameters": {}}),
-        ("compare_mcp_context_cost", {"parameters": {}}),
+        ("compare_mcp_context_cost", {}),
     ]
 
 
