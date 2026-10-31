@@ -20,6 +20,14 @@ from fmind import __version__
 from fmind.api import MAX_BYTES, TIMEOUT_SECONDS, USER_AGENT, FmindError, origin_url
 
 
+class _ResponseError(httpx2.StreamError):
+    """A remote response broke a bound or the connection mid-body.
+
+    The SDK turns a stream error into one JSON-RPC error for that request; any
+    other exception escapes its transport task group and ends the whole bridge.
+    """
+
+
 class _BoundedStream(httpx2.AsyncByteStream):
     def __init__(self, stream: httpx2.AsyncByteStream, deadline: float) -> None:
         self.stream = stream
@@ -32,10 +40,12 @@ class _BoundedStream(httpx2.AsyncByteStream):
                 async for chunk in self.stream:
                     size += len(chunk)
                     if size > MAX_BYTES:
-                        raise FmindError("the remote MCP response exceeded the size limit")
+                        raise _ResponseError("the remote MCP response exceeded the size limit")
                     yield chunk
         except TimeoutError as error:
-            raise httpx2.ReadTimeout("the remote MCP response exceeded its deadline") from error
+            raise _ResponseError("the remote MCP response exceeded its deadline") from error
+        except httpx2.TransportError as error:
+            raise _ResponseError("the remote MCP response was interrupted") from error
 
     async def aclose(self) -> None:
         await self.stream.aclose()
@@ -45,15 +55,20 @@ class _BoundedTransport(httpx2.AsyncHTTPTransport):
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         # HTTPX read timeouts restart for every chunk. A legacy MCP server may
         # ignore cancellation, so bound the entire HTTP exchange independently.
+        # Failures become gateway statuses: the SDK answers those with one
+        # JSON-RPC error, while a raised exception would end the whole bridge.
         deadline = asyncio.get_running_loop().time() + TIMEOUT_SECONDS
         try:
             async with asyncio.timeout_at(deadline):
                 response = await super().handle_async_request(request)
-        except TimeoutError as error:
-            raise httpx2.ReadTimeout("the remote MCP response exceeded its deadline", request=request) from error
+        except TimeoutError:
+            return httpx2.Response(504, request=request)
+        except httpx2.TransportError:
+            return httpx2.Response(502, request=request)
         if response.headers.get("content-encoding", "identity") != "identity":
+            # The client asks for identity, so a compressed body is a broken upstream.
             await response.aclose()
-            raise FmindError("the remote MCP server ignored the uncompressed response requirement")
+            return httpx2.Response(502, request=request)
         if not isinstance(response.stream, httpx2.AsyncByteStream):
             raise FmindError("the remote MCP transport returned an invalid stream")
         response.stream = _BoundedStream(response.stream, deadline)
@@ -103,6 +118,7 @@ async def serve() -> None:
     endpoint = origin_url("/mcp")
     # Protocol failures carry safe messages; SDK HTTP diagnostics can contain URLs.
     logging.getLogger("mcp").setLevel(logging.CRITICAL)
+    connected = False
     try:
         async with (
             httpx2.AsyncClient(
@@ -118,7 +134,12 @@ async def serve() -> None:
             stdio_server() as (reader, writer),
         ):
             server = create_bridge(remote)
+            connected = True
             await server.run(reader, writer, server.create_initialization_options())
     except Exception as error:
+        # After connecting, upstream failures are per-request JSON-RPC errors, so what
+        # remains (such as a host closing stdio) must not blame the remote server.
+        if connected:
+            raise FmindError("the MCP bridge stopped unexpectedly after connecting") from error
         message = "could not connect to the remote MCP server; check your connection and FMIND_PROFILE_URL"
         raise FmindError(message) from error

@@ -51,8 +51,8 @@ run = "uv run --locked --extra mcp ruff check src tests"
 
 [tasks."check:types"]
 alias = "ct"
-description = "Type-check Python sources (ty)"
-run = "uv run --locked --extra mcp ty check src"
+description = "Type-check Python sources and tests (ty)"
+run = "uv run --locked --extra mcp ty check src tests"
 
 [tasks."check:vuln"]
 description = "Audit locked Python dependencies for known vulnerabilities"
@@ -74,7 +74,7 @@ run = [
 [tasks.install]
 alias = "i"
 description = "Sync the locked environment and install git hooks"
-run = ["uv sync --all-groups --all-extras --frozen", "lefthook install"]
+run = ["uv sync --all-groups --all-extras --locked", "lefthook install"]
 
 [tasks.smoke]
 description = "Exercise every command against the live site (network-dependent, not a merge gate)"

@@ -8,22 +8,22 @@ uvx fmind whoami
 
 ## Commands
 
-| Command                                     | Shows                                             |
-| ------------------------------------------- | ------------------------------------------------- |
-| `fmind`                                     | The `whoami` card and a pointer to `--help`       |
-| `fmind whoami`                              | Name, featured experience, availability, contact  |
-| `fmind about`                               | The biography                                     |
-| `fmind skills`                              | Core expertise, as published on the site          |
-| `fmind experiences`                         | Engagements in website order                      |
-| `fmind community`                           | Ambassador and advisory roles                     |
-| `fmind certifications`                      | Certifications, the PhD, specializations          |
-| `fmind papers`                              | The doctorate and the peer-reviewed publications  |
-| `fmind projects [--limit 6]`                | Open-source repositories and video series         |
-| `fmind sites`                               | Interactive tools published alongside the writing |
-| `fmind articles [--limit 6]`                | The most recent writing                           |
-| `fmind search [query] [--tag] [--limit 10]` | Articles matching every term, newest first        |
-| `fmind read <slug> [--raw]`                 | One article, rendered in the terminal             |
-| `fmind hire`                                | What can be booked right now                      |
+| Command                                        | Shows                                             |
+| ---------------------------------------------- | ------------------------------------------------- |
+| `fmind`                                        | The `whoami` card and a pointer to `--help`       |
+| `fmind whoami`                                 | Name, featured experience, availability, contact  |
+| `fmind about`                                  | The biography                                     |
+| `fmind skills`                                 | Core expertise, as published on the site          |
+| `fmind experiences`                            | Engagements in website order                      |
+| `fmind community`                              | Ambassador and advisory roles                     |
+| `fmind certifications`                         | Certifications, the PhD, specializations          |
+| `fmind papers`                                 | The doctorate and the peer-reviewed publications  |
+| `fmind projects [--limit 6]`                   | Open-source repositories and video series         |
+| `fmind sites`                                  | Interactive tools published alongside the writing |
+| `fmind articles [--limit 6]`                   | The most recent writing                           |
+| `fmind search [query...] [--tag] [--limit 10]` | Articles matching every term, newest first        |
+| `fmind read <slug> [--raw]`                    | One article, rendered in the terminal             |
+| `fmind hire`                                   | What can be booked right now                      |
 
 The commands group sections of the website's profile API. Their names stay stable when the website's navigation or visual design changes.
 
@@ -35,14 +35,14 @@ Output uses your terminal's default text colour and blue accent. Community roles
 
 ### Reading
 
-`fmind search` matches titles, summaries, tags and slugs; terms are ANDed, so each extra word narrows the result. `--tag` restricts to one of the site's own tags, case-insensitively; an unknown tag fails and lists the published ones.
+`fmind search` matches titles, summaries, tags and slugs; terms are ANDed, so each extra word narrows the result, with or without quotes. `--tag` restricts to one of the site's own tags, case-insensitively; an unknown tag fails and lists the published ones.
 
 ```bash
-fmind search "agent security"
+fmind search agent security
 fmind search --tag MLOps --limit 3
 ```
 
-`fmind read` takes a slug, or enough of one to be unambiguous, and prints the article. In an interactive terminal it pages through `$PAGER` (default `less`, with `LESS=FRX` unless you set `LESS`), so short articles print directly; `PAGER=cat` disables paging. If the selected pager cannot start or exits unsuccessfully, the command reports an error; retry with `PAGER=cat`. Use `--raw` for the Markdown source.
+`fmind read` takes a slug, or enough of one to be unambiguous, and prints the article. In an interactive terminal whose `TERM` your system's terminfo database knows (not `dumb`), it pages through `$PAGER` (default `less`, with `LESS=FRX` unless you set `LESS`), so short articles print directly; `PAGER=cat` disables paging. A missing or unparsable `PAGER` is skipped and the article prints directly; if the pager fails to launch or exits unsuccessfully, the command reports an error; retry with `PAGER=cat`. Use `--raw` for the Markdown source.
 
 ```bash
 slug="$(fmind articles --limit 1 --json | jq -r '.[0].slug')"
@@ -104,7 +104,7 @@ For a host that accepts JSON configuration:
 }
 ```
 
-`fmind mcp` connects to `https://www.fmind.dev/mcp` using Streamable HTTP and forwards the website's tools, resources, and prompts over stdio. The website owns their names, schemas, and content. Set `FMIND_PROFILE_URL` in the host's environment to use `/mcp` on another website origin. No local data or response cache is used. The website answers MCP POST requests with JSON; GET/HEAD return `405` with `Allow: POST` because notification streams are not offered. Use `/health` for uptime probes. Requests have a 15-second deadline and remote HTTP responses are limited to 8 MiB.
+`fmind mcp` connects to `https://www.fmind.dev/mcp` using Streamable HTTP and forwards the website's tools, resources, and prompts over stdio. The website owns their names, schemas, and content. Set `FMIND_PROFILE_URL` in the host's environment to use `/mcp` on another website origin. No local data or response cache is used. The website answers MCP POST requests with JSON; GET/HEAD return `405` with `Allow: POST` because notification streams are not offered. Use `/health` for uptime probes. Requests have a 15-second deadline and remote HTTP responses are limited to 8 MiB. A request that exceeds these bounds or loses its connection fails on its own, and the bridge keeps serving.
 
 Stdout carries only MCP messages; startup errors go to stderr. Portfolio output flags such as `--json` do not apply to `mcp`. The bridge forwards read-only request/response operations; subscriptions and server-initiated sampling or elicitation are not advertised.
 
@@ -116,15 +116,16 @@ From this checkout, run `uv run --extra mcp fmind mcp`. The optional extra uses 
 mise install       # install the pinned toolchain
 mise run install   # sync the locked environment and install hooks
 mise run format    # ruff imports and format, dprint
-mise run check     # ruff, ty, actionlint, zizmor, gitleaks, dependency audit
+mise run check     # lockfile, ruff, ty, dprint, actionlint, zizmor, gitleaks, dependency audit
 mise run test      # offline pytest with branch coverage
 mise run smoke     # exercise every command against the live site
+mise run build     # build the wheel and source distribution
 mise run all       # format, check, test, build — the gate CI runs
 ```
 
-The pre-commit hook runs checks without changing or staging files; run `mise run format` before committing. The pre-push hook runs the offline tests. CI runs the full gate on the pinned Python, tests Python 3.11–3.14 for compatibility, and tests the declared dependency floors with `--resolution lowest-direct` on Python 3.11.
+The pre-commit hook runs checks without changing or staging files; run `mise run format` before committing. The pre-push hook runs the offline tests. CI runs the full gate on the pinned Python, tests Python 3.11–3.15 for compatibility, and tests the declared dependency floors with `--resolution lowest-direct` on Python 3.11.
 
-A release tag must match the version in `pyproject.toml` (for example, `v0.1.0`). CD runs the same full gate for that tag and checks the live commands before publishing through PyPI Trusted Publishing. The live smoke check is a release check, not a pull-request gate.
+A release tag must match the version in `pyproject.toml` (for example, `v0.1.0`). CD reruns every CI job for that tag (the gate, the Python versions, and the dependency floors) and checks the live commands before publishing through PyPI Trusted Publishing. The live smoke check is a release check, not a pull-request gate.
 
 ## License
 

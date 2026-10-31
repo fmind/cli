@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+import email.message
 import http.client
 import io
 import json
 import threading
 import urllib.error
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import pytest
 
 from fmind import api
+
+
+class _Response(io.BytesIO):
+    """What urlopen returns: a byte stream with headers."""
+
+    def __init__(self, body: bytes, headers: dict[str, str] | None = None) -> None:
+        super().__init__(body)
+        self.headers = headers or {}
 
 
 def test_every_call_fetches_the_current_profile(offline: None, document: dict[str, Any]) -> None:
@@ -59,11 +68,36 @@ def test_environment_is_read_at_call_time(monkeypatch: pytest.MonkeyPatch, docum
 
 
 @pytest.mark.parametrize(
-    "payload", [b"<html>nope</html>", b"\xff", b"[" * 2000, b'{"metadata": NaN}', b'{"metadata": -Infinity}']
+    "payload",
+    [
+        b"<html>nope</html>",
+        b"\xff",
+        b"[" * 2000,  # unterminated
+        # Balanced, under MAX_BYTES, and deep enough for the decoder's RecursionError.
+        b"[" * 10**6 + b"]" * 10**6,
+        b'{"metadata": NaN}',
+        b'{"metadata": -Infinity}',
+    ],
 )
 def test_rejects_invalid_json(payload: bytes) -> None:
     with pytest.raises(api.FmindError, match="did not return JSON"):
         api._parse_profile(payload)
+
+
+@pytest.mark.parametrize("extra", [0, 1])
+def test_bounds_the_nesting_that_json_output_forwards(document: dict[str, Any], extra: int) -> None:
+    # A future field inside a section: "future" sits two levels down, so its own
+    # lists reach exactly MAX_DEPTH, or one level past it.
+    nested: list[Any] = []
+    for _ in range(api.MAX_DEPTH - 2 + extra):
+        nested = [nested]
+    document["metadata"]["future"] = nested
+    payload = json.dumps(document).encode()
+    if extra:
+        with pytest.raises(api.FmindError, match="nested over 32 levels"):
+            api._parse_profile(payload)
+    else:
+        assert api._parse_profile(payload) == document
 
 
 @pytest.mark.parametrize("number", ["1e999", "-1e999"])
@@ -187,14 +221,12 @@ def test_article_requires_utf8() -> None:
 
 
 def test_transport_revalidates_http_caches_and_bounds_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    def open_url(request: Any, timeout: float) -> io.BytesIO:
+    def open_url(request: Any, timeout: float) -> _Response:
         assert request.get_header("Cache-control") == "no-cache"
         assert request.get_header("Accept") == "text/markdown"
         assert request.get_header("User-agent").startswith("fmind/")
         assert timeout == 15.0
-        response = io.BytesIO(b"# Article")
-        response.headers = {"Content-Length": "9"}
-        return response
+        return _Response(b"# Article", {"Content-Length": "9"})
 
     monkeypatch.setattr("urllib.request.urlopen", open_url)
     assert api._download("https://example.test/article.md", "text/markdown") == b"# Article"
@@ -206,7 +238,7 @@ def test_transport_revalidates_http_caches_and_bounds_reads(monkeypatch: pytest.
 @pytest.mark.parametrize(
     "error",
     [
-        urllib.error.HTTPError("https://example.test", 503, "maintenance", None, None),
+        urllib.error.HTTPError("https://example.test", 503, "maintenance", email.message.Message(), None),
         urllib.error.URLError("private transport detail"),
         TimeoutError("private timeout detail"),
         http.client.IncompleteRead(b"private partial body"),
@@ -228,8 +260,7 @@ def test_transport_errors_are_safe_and_keep_the_cause(monkeypatch: pytest.Monkey
 
 @pytest.mark.parametrize("length", ["20", "invalid"])
 def test_transport_rejects_incomplete_documents(monkeypatch: pytest.MonkeyPatch, length: str) -> None:
-    response = io.BytesIO(b"# Partial")
-    response.headers = {"Content-Length": length}
+    response = _Response(b"# Partial", {"Content-Length": length})
     monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: response)
     with pytest.raises(api.FmindError, match="could not read the website"):
         api.load_article("example")
@@ -270,10 +301,8 @@ def test_total_deadline_bounds_blocking_io(monkeypatch: pytest.MonkeyPatch, bloc
     release = threading.Event()
     closed = threading.Event()
 
-    class Response(io.BytesIO):
-        headers: ClassVar[dict[str, str]] = {}
-
-        def read1(self, size: int = -1) -> bytes:
+    class Response(_Response):
+        def read1(self, size: int | None = -1, /) -> bytes:
             if blocked_phase == "body":
                 release.wait(5)
             return super().read1(size)
@@ -301,10 +330,8 @@ def test_total_deadline_bounds_blocking_io(monkeypatch: pytest.MonkeyPatch, bloc
 def test_worker_stops_a_progressing_body_at_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 0.0
 
-    class Response(io.BytesIO):
-        headers: ClassVar[dict[str, str]] = {}
-
-        def read1(self, size: int = -1) -> bytes:
+    class Response(_Response):
+        def read1(self, size: int | None = -1, /) -> bytes:
             nonlocal now
             now += 0.4
             return super().read1(1)

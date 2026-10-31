@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
-from typing import Annotated, Any
+from typing import IO, Annotated, Any, cast
 
 import typer
 from rich.console import Console, RenderableType
@@ -82,17 +83,52 @@ class _SystemPager(Pager):
         # Like Git: respect an explicit LESS, otherwise keep colours (-R), skip
         # paging for short output (-F), and leave the text on screen (-X).
         environment = {**os.environ, "LESS": os.environ.get("LESS", "FRX")}
+        message = "could not display the article with PAGER; check PAGER or use PAGER=cat"
         try:
-            subprocess.run(  # noqa: S603
-                self.command, input=content.encode(), env=environment, stderr=subprocess.DEVNULL, check=True
-            )
-        except (OSError, subprocess.CalledProcessError) as error:
-            raise FmindError("could not display the article with PAGER; check PAGER or use PAGER=cat") from error
+            process = subprocess.Popen(self.command, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL, env=environment)  # noqa: S603
+        except OSError as error:
+            raise FmindError(message) from error
+        # Like the standard library's pager: Ctrl-C belongs to the pager. subprocess.run
+        # would kill it, leaving the terminal in raw mode, so wait for it to quit instead.
+        # Ctrl-C drops the unwritten rest, and a pager that quits early closes the pipe.
+        with (
+            contextlib.suppress(OSError),
+            cast("IO[bytes]", process.stdin) as pipe,
+            contextlib.suppress(KeyboardInterrupt),
+        ):
+            pipe.write(content.encode())
+        while True:
+            try:
+                code = process.wait()
+                break
+            except KeyboardInterrupt:
+                pass
+        if code != 0:
+            raise FmindError(message)
+
+
+def _full_screen_terminal() -> bool:
+    """Whether TERM describes a terminal that a full-screen pager can drive."""
+    # Otherwise less stops at a "terminal is not fully functional" prompt that the
+    # hidden stderr turns into a blank screen: TERM unset or dumb, or missing from
+    # terminfo (TERM=xterm-kitty over SSH). setupterm also rejects generic and
+    # hardcopy entries such as `unknown`.
+    if os.environ.get("TERM", "") in {"", "dumb"}:
+        return False
+    try:
+        import curses  # only the pager needs it, and Windows lacks it
+    except ImportError:
+        return True
+    try:
+        curses.setupterm()
+    except curses.error:
+        return False
+    return True
 
 
 def _pager_command() -> list[str] | None:
     """Return the pager for an interactive terminal, or None to print directly."""
-    if not (sys.stdin.isatty() and sys.stdout.isatty()) or os.environ.get("TERM") == "dumb":
+    if not (sys.stdin.isatty() and sys.stdout.isatty() and _full_screen_terminal()):
         return None
     try:
         command = shlex.split(os.environ.get("PAGER", "less"))
@@ -122,16 +158,16 @@ def _emit(ctx: typer.Context, body: RenderableType, payload: Any, *, as_json: bo
         _write(CONTROL_PATTERN.sub(lambda match: f"\\u{ord(match.group()):04x}", text) + "\n")
         return
     out = _console(ctx)
-    if not out.is_terminal:
-        out.print(render.Trimmed(body), crop=False)
-        return
-    command = _pager_command() if page else None
+    # Trim on terminals too: forced colour (--color, FORCE_COLOR) makes Rich treat a
+    # pipe or file as a terminal, and line-end padding is invisible on a real one.
+    trimmed = render.Trimmed(body)
+    command = _pager_command() if page and out.is_terminal else None
     if command is None:
-        out.print(body, crop=False)
+        out.print(trimmed, crop=False)
         return
     try:
         with out.pager(pager=_SystemPager(command), styles=True):
-            out.print(body, crop=False)
+            out.print(trimmed, crop=False)
     except FmindError as error:
         raise _fail(str(error)) from error
 
@@ -226,8 +262,11 @@ def list_articles(ctx: typer.Context, limit: LimitOption = 6, as_json: JsonOptio
 @app.command()
 def search(
     ctx: typer.Context,
-    # Optional, so filtering by tag alone needs no empty positional argument.
-    query: Annotated[str, typer.Argument(help="Terms to match against titles, summaries, tags and slugs.")] = "",
+    # Optional, so filtering by tag alone needs no empty positional argument; several
+    # words need no quotes, so the hint printed by `read` runs as written.
+    query: Annotated[
+        list[str] | None, typer.Argument(help="Terms to match against titles, summaries, tags and slugs.")
+    ] = None,
     tag: Annotated[str | None, typer.Option("--tag", help="Restrict to one of the site's tags, such as Agent.")] = None,
     limit: LimitOption = 10,
     as_json: JsonOption = False,
@@ -238,7 +277,7 @@ def search(
         names = [entry["name"] for entry in doc["tags"]]
         if tag.lower() not in {name.lower() for name in names}:
             raise _fail(f"unknown tag {tag!r}; choose one of: {', '.join(names)}")
-    found = articles.search(doc["articles"], query, tag=tag, limit=limit)
+    found = articles.search(doc["articles"], " ".join(query or []), tag=tag, limit=limit)
     footer = f"{len(found)} shown · {len(doc['articles'])} published · fmind read <slug> opens one"
     _emit(ctx, render.articles(found, footer=footer), found, as_json=as_json)
 
@@ -254,7 +293,8 @@ def read(
     doc = _doc()
     matches = articles.candidates(doc["articles"], slug.strip().lower())
     if not matches:
-        raise _fail(f"no article matches {slug!r} — try: fmind search {slug}")
+        # Quote only what the shell would split or expand, so the hint runs as printed.
+        raise _fail(f"no article matches {slug!r} — try: fmind {shlex.join(['search', *slug.split()])}")
     if len(matches) > 1:
         listed = ", ".join(matches[:10])
         raise _fail(f"{slug!r} matches {len(matches)} articles: {listed}")
@@ -267,7 +307,8 @@ def read(
     if raw and not (as_json or ctx.find_root().params["as_json"]):
         _write(markdown)
         return
-    payload = {"slug": resolved, "markdown": markdown, **(post or {})}
+    # The fetched article wins over any same-named field in the index entry.
+    payload = {**(post or {}), "slug": resolved, "markdown": markdown}
     _emit(ctx, render.article_body(markdown), payload, as_json=as_json, page=True)
 
 

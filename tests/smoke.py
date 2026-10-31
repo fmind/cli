@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from mcp import Client, StdioServerParameters
+from mcp_types import TextResourceContents
 from typer.testing import CliRunner
 
 from fmind.api import _parse_profile, load_profile
@@ -71,7 +72,10 @@ async def smoke_mcp() -> None:
             if not result.contents:
                 raise RuntimeError(f"MCP resources/read {resource.name} returned no content")
             if resource.name == "profile":
-                _parse_profile(result.contents[0].text.encode())
+                content = result.contents[0]
+                if not isinstance(content, TextResourceContents):
+                    raise RuntimeError("MCP resources/read profile is no longer text")
+                _parse_profile(content.text.encode())
             print(f"ok    MCP resources/read {resource.name}")
         for prompt in prompts:
             arguments = {arg.name: "Compatibility check" for arg in prompt.arguments or [] if arg.required}
@@ -91,7 +95,8 @@ def smoke_portfolio() -> None:
     if not posts:
         raise RuntimeError("the website lists no article to read")
     # Discover commands from Typer so a new section cannot silently miss the check.
-    sections = [[command.name or command.callback.__name__] for command in app.registered_commands]
+    # A command with neither name nor callback becomes "", which fails loudly below.
+    sections = [[command.name or getattr(command.callback, "__name__", "")] for command in app.registered_commands]
     commands = [command for command in sections if command[0] not in {"mcp", "read", "search"}]
     commands += [["search", posts[0]["slug"]], ["read", posts[0]["slug"]]]
     variants = [

@@ -52,9 +52,13 @@ module-root = "src"
 line-length = 120
 target-version = "py311"
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "S", "SIM", "RUF"]
+select = ["E", "F", "I", "N", "UP", "B", "S", "SIM", "RUF", "TID"]
+[tool.ruff.lint.flake8-tidy-imports]
+# Portfolio commands run without the optional `mcp` extra; only the bridge loads it.
+banned-module-level-imports = ["fmind.mcp", "httpx2", "mcp", "mcp_types"]
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"] # assertions are the point of a test
+"src/fmind/mcp.py" = ["TID253"] # the bridge is the extra's only importer
+"tests/**" = ["S101", "TID253"] # assertions are the point of a test; tests install every extra
 [tool.ruff.format]
 docstring-code-format = true
 

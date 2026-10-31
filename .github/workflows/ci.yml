@@ -4,10 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call: # CD runs these jobs on the tagged commit before publishing
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # A literal prefix: when CD calls this workflow, github.workflow names the caller,
+  # and sharing its group would cancel or block the release run.
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   gate:
@@ -39,7 +42,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13", "3.14"]
+        # The gate covers the pinned interpreter; a pin bump must move the old pin here.
+        python: ["3.11", "3.12", "3.13", "3.15"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,8 +54,8 @@ jobs:
         with:
           version: 2026.10.21 # pinned mise; bump deliberately with mise.lock tooling
           cache: true
-      # The gate runs on the pinned interpreter; this proves the `requires-python` floor
-      # the published wheel advertises, on the oldest versions it claims to support.
+      # The gate runs on the pinned interpreter; this proves the `requires-python` range
+      # the published wheel advertises, from its floor to the newest release.
       - name: Run the test suite
         env:
           PYTHON_VERSION: ${{ matrix.python }}

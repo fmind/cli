@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import httpx2
 from mcp.server import MCPServer
 
@@ -30,16 +32,23 @@ def main() -> None:
     from fmind.cli import app
 
     http_app = upstream().streamable_http_app(stateless_http=True, json_response=True)
+    asgi = httpx2.ASGITransport(app=http_app)
     original = mcp.serve
 
     async def serve() -> None:
         async with http_app.router.lifespan_context(http_app):
             await original()
 
-    # HTTP requests still pass through SDK serialization and the upstream ASGI app.
-    mcp._BoundedTransport = lambda: httpx2.ASGITransport(app=http_app)  # type: ignore[assignment]
-    mcp.serve = serve
-    app(["mcp"])
+    async def handle(_transport: httpx2.AsyncHTTPTransport, request: httpx2.Request) -> httpx2.Response:
+        return await asgi.handle_async_request(request)
+
+    # Only the network hop is replaced: requests still pass through the bridge's
+    # bounded transport, SDK serialization, and the upstream ASGI app.
+    with (
+        patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", handle),
+        patch.object(mcp, "serve", serve),
+    ):
+        app(["mcp"])
 
 
 if __name__ == "__main__":

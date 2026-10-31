@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
@@ -62,6 +62,11 @@ def _entry(*lines: RenderableType) -> Group:
     return Group(*lines, Text())
 
 
+def _listing(blocks: Sequence[RenderableType], empty: str) -> RenderableType:
+    """The entries, or one line saying so when the website publishes none."""
+    return Group(*blocks) if blocks else Text(empty)
+
+
 def _rows(pairs: list[tuple[str, RenderableType]]) -> Table:
     """Lay out aligned key/value rows without visible borders."""
     table = Table.grid(padding=(0, 2))
@@ -113,37 +118,36 @@ def about(doc: dict[str, Any]) -> RenderableType:
 
 def skills(doc: dict[str, Any]) -> RenderableType:
     """Show expertise without inventing command-line options or local labels."""
-    return Group(*(_entry(Text(card["title"], style="bold"), Text(card["description"])) for card in doc["expertise"]))
+    blocks = [_entry(Text(card["title"], style="bold"), Text(card["description"])) for card in doc["expertise"]]
+    return _listing(blocks, "no expertise published")
 
 
 def experiences(doc: dict[str, Any]) -> RenderableType:
     """Engagements in the order published by the website."""
-    return Group(
-        *(
-            _entry(
-                Text(job["company"].upper(), style=ACCENT),
-                Text(job["title"], style="bold"),
-                Text(job["description"]),
-                Text("  ".join(job["tags"])),
-            )
-            for job in doc["experience"]
+    blocks = [
+        _entry(
+            Text(job["company"].upper(), style=ACCENT),
+            Text(job["title"], style="bold"),
+            Text(job["description"]),
+            Text("  ".join(job["tags"])),
         )
-    )
+        for job in doc["experience"]
+    ]
+    return _listing(blocks, "no experience published")
 
 
 def community(doc: dict[str, Any]) -> RenderableType:
     """Ambassador and advisory roles, with their published links."""
-    return Group(
-        *(
-            _entry(
-                Text(role["organization"], style=ACCENT),
-                Text(role["role"], style="bold"),
-                Text(role["description"]),
-                _link(role["url"]),
-            )
-            for role in doc["leadership"]
+    blocks = [
+        _entry(
+            Text(role["organization"], style=ACCENT),
+            Text(role["role"], style="bold"),
+            Text(role["description"]),
+            _link(role["url"]),
         )
-    )
+        for role in doc["leadership"]
+    ]
+    return _listing(blocks, "no community role published")
 
 
 def certifications(doc: dict[str, Any]) -> RenderableType:
@@ -180,7 +184,7 @@ def projects(doc: dict[str, Any], *, limit: int = 6) -> RenderableType:
     blocks += [
         _entry(Text(video["title"], style="bold"), Text(video["description"]), _link(video["url"])) for video in series
     ]
-    return Group(*blocks)
+    return _listing(blocks, "no project published")
 
 
 def articles(posts: list[dict[str, Any]], *, footer: str = "") -> RenderableType:
@@ -242,19 +246,18 @@ def sites(doc: dict[str, Any]) -> RenderableType:
         )
         for page in doc["site_pages"]
     ]
-    return Group(*blocks) if blocks else Text("no interactive site published")
+    return _listing(blocks, "no interactive site published")
 
 
 def hire(doc: dict[str, Any]) -> RenderableType:
     """What can be booked right now."""
-    return Group(
-        *(
-            _entry(
-                Text(service["title"], style="bold"),
-                Text(service["description"]),
-                Text(service["badge"], style="bold"),
-                _link(service["cta_url"]),
-            )
-            for service in doc["services"]
+    blocks = [
+        _entry(
+            Text(service["title"], style="bold"),
+            Text(service["description"]),
+            Text(service["badge"], style="bold"),
+            _link(service["cta_url"]),
         )
-    )
+        for service in doc["services"]
+    ]
+    return _listing(blocks, "no service published")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 from importlib.metadata import distribution, version
 from typing import Any
@@ -47,6 +48,25 @@ def test_section_renders(section: str) -> None:
     result = runner.invoke(app, ["--no-color", section])
     assert result.exit_code == 0, result.output
     assert result.output.strip(), f"{section} produced no output"
+
+
+@pytest.mark.parametrize(
+    ("section", "keys", "message"),
+    [
+        ("skills", ["expertise"], "no expertise published"),
+        ("experiences", ["experience"], "no experience published"),
+        ("community", ["leadership"], "no community role published"),
+        ("projects", ["open_source", "youtube_series"], "no project published"),
+        ("sites", ["site_pages"], "no interactive site published"),
+        ("hire", ["services"], "no service published"),
+    ],
+)
+def test_empty_sections_say_so(document: dict[str, Any], section: str, keys: list[str], message: str) -> None:
+    for key in keys:
+        document[key] = []
+    result = runner.invoke(app, ["--no-color", section])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"{message}\n"
 
 
 def test_whoami_shows_identity_and_featured_experience() -> None:
@@ -100,6 +120,25 @@ def test_search_narrows_the_listing() -> None:
     assert hit.exit_code == 0
     assert "Older" in hit.output
     assert "Newer" not in hit.output
+
+
+@pytest.mark.parametrize("words", [["older", "llm"], ["older llm"], ["llm", "--tag", "LLM", "older"]])
+def test_search_ands_unquoted_words(words: list[str]) -> None:
+    hit = runner.invoke(app, ["--no-color", "search", *words])
+    assert hit.exit_code == 0, hit.output
+    assert "Older" in hit.output
+    assert "Newer" not in hit.output
+    assert "no article matches" in runner.invoke(app, ["--no-color", "search", "older", "agent"]).output
+
+
+@pytest.mark.parametrize(("slug", "hint"), [("older llm", "search older llm"), ("older&", "search 'older&'")])
+def test_read_miss_hint_runs_as_printed(slug: str, hint: str) -> None:
+    result = runner.invoke(app, ["read", slug])
+    assert result.exit_code == 1
+    assert result.stderr.endswith(f"try: fmind {hint}\n")
+    # A shell would pass these arguments to the suggested command.
+    rerun = runner.invoke(app, ["--no-color", *shlex.split(hint)])
+    assert rerun.exit_code == 0, rerun.output
 
 
 def test_search_without_a_match_says_so_and_still_succeeds() -> None:
@@ -260,10 +299,13 @@ def test_json_escapes_controls_in_unvalidated_fields(document: dict[str, Any]) -
     assert json.loads(result.stdout)["metadata"]["future"] == "x\x9b2J\x7f"
 
 
-def test_json_read_carries_the_markdown() -> None:
+def test_json_read_carries_the_markdown(document: dict[str, Any]) -> None:
+    # An index field named like the body must not replace the fetched Markdown.
+    document["articles"][0]["markdown"] = "https://example.test/articles/newer.md"
     payload = json.loads(runner.invoke(app, ["--json", "read", "newer"]).output)
     assert payload["slug"] == "newer"
     assert payload["markdown"].startswith("# Newer")
+    assert payload["title"] == "Newer"
 
 
 def test_json_search_is_machine_readable() -> None:
@@ -480,11 +522,16 @@ def test_published_links_are_visible_and_validated(document: dict[str, Any], com
         assert "Traceback" not in result.stderr
 
 
-@pytest.mark.parametrize("section", SECTIONS)
-def test_redirected_output_has_no_trailing_whitespace(section: str) -> None:
-    result = runner.invoke(app, ["--no-color", section], terminal_width=120)
+@pytest.mark.parametrize("section", [*SECTIONS, "read newer"])
+@pytest.mark.parametrize("colour", ["--no-color", "--color", "FORCE_COLOR"])
+def test_redirected_output_has_no_trailing_whitespace(section: str, colour: str) -> None:
+    # Forced colour makes Rich treat the redirected stream as a terminal.
+    flags, env = ([], {"FORCE_COLOR": "1"}) if colour == "FORCE_COLOR" else ([colour], {})
+    result = runner.invoke(app, [*flags, *section.split()], terminal_width=120, env=env)
     assert result.exit_code == 0, result.output
-    assert all(line == line.rstrip() for line in result.stdout.splitlines())
+    for line in result.stdout.splitlines():
+        assert not line.endswith(" ")
+        assert Text.from_ansi(line).plain == Text.from_ansi(line).plain.rstrip()
 
 
 def test_long_links_stay_on_one_line(document: dict[str, Any]) -> None:
@@ -545,6 +592,9 @@ def test_pager_is_used_only_for_an_interactive_terminal(monkeypatch: pytest.Monk
         def isatty(self) -> bool:
             return True
 
+        def fileno(self) -> int:
+            return 1  # setupterm reads the terminfo entry; the descriptor need not be a terminal
+
     monkeypatch.setattr(sys, "stdin", Terminal())
     monkeypatch.setattr(sys, "stdout", Terminal())
     monkeypatch.setenv("TERM", "xterm-256color")
@@ -556,45 +606,142 @@ def test_pager_is_used_only_for_an_interactive_terminal(monkeypatch: pytest.Monk
         assert cli._pager_command() is None
     monkeypatch.delenv("PAGER")
     assert cli._pager_command() == ["less"]
-    monkeypatch.setenv("TERM", "dumb")
-    assert cli._pager_command() is None
+    for term in ("dumb", ""):
+        monkeypatch.setenv("TERM", term)
+        assert cli._pager_command() is None
+    monkeypatch.delenv("TERM")
+    assert cli._pager_command() is None, "less would wait at a hidden prompt without TERM"
     monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.setattr("shutil.which", lambda name: None)
     assert cli._pager_command() is None
 
 
+def test_pager_needs_a_terminal_it_can_drive(monkeypatch: pytest.MonkeyPatch) -> None:
+    import curses
+    import sys
+
+    from fmind import cli
+
+    def unknown(*args: object) -> None:
+        raise curses.error("setupterm: could not find terminal")
+
+    monkeypatch.setenv("TERM", "xterm-nosuchterm")
+    monkeypatch.setattr(curses, "setupterm", unknown)
+    assert not cli._full_screen_terminal()
+    monkeypatch.setitem(sys.modules, "curses", None)
+    assert cli._full_screen_terminal(), "without curses (Windows), TERM is trusted"
+
+
+@pytest.mark.parametrize(
+    ("term", "expected"), [("xterm-256color", True), ("xterm-nosuchterm", False), ("unknown", False)]
+)
+def test_pager_checks_the_terminfo_database(term: str, expected: bool) -> None:
+    import os
+    import sys
+
+    # A fresh interpreter: curses keeps the first terminal it sets up for the whole process.
+    # `unknown` is in terminfo, but generic; less would wait at a hidden prompt for it too.
+    script = "from fmind import cli; print(cli._full_screen_terminal())"
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script], env={**os.environ, "TERM": term}, capture_output=True, text=True, check=True
+    )
+    assert result.stdout == f"{expected}\n"
+
+
+class _Pager:
+    """A pager process: records its input and exits with `code`, or is interrupted first."""
+
+    def __init__(
+        self, command: list[str], *, code: int = 0, interrupt: bool = False, quit_early: bool = False, **kwargs: Any
+    ) -> None:
+        self.command = command
+        self.kwargs = kwargs
+        self.code = code
+        self.interrupt = interrupt
+        self.quit_early = quit_early
+        self.written = b""
+        self.waits = 0
+        self.stdin = self
+
+    def __enter__(self) -> _Pager:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def write(self, data: bytes) -> int:
+        if self.interrupt:
+            # Ctrl-C while blocked on a full pipe, as when less waits at its prompt.
+            raise KeyboardInterrupt
+        if self.quit_early:
+            raise BrokenPipeError(32, "Broken pipe")
+        self.written += data
+        return len(data)
+
+    def wait(self) -> int:
+        self.waits += 1
+        if self.interrupt and self.waits == 1:
+            raise KeyboardInterrupt
+        return self.code
+
+    def kill(self) -> None:
+        raise AssertionError("a killed pager leaves the terminal in raw mode")
+
+
 def test_system_pager_keeps_colour_and_respects_less(monkeypatch: pytest.MonkeyPatch) -> None:
     from fmind import cli
 
-    calls: list[dict[str, Any]] = []
-    monkeypatch.setattr("subprocess.run", lambda command, **kwargs: calls.append({"command": command, **kwargs}))
+    pagers: list[_Pager] = []
+
+    def popen(command: list[str], **kwargs: Any) -> _Pager:
+        pagers.append(_Pager(command, **kwargs))
+        return pagers[-1]
+
+    monkeypatch.setattr("subprocess.Popen", popen)
     monkeypatch.delenv("LESS", raising=False)
     cli._SystemPager(["less"]).show("text")
     monkeypatch.setenv("LESS", "-S")
     cli._SystemPager(["less"]).show("more")
-    assert [call["env"]["LESS"] for call in calls] == ["FRX", "-S"]
-    assert calls[0]["command"] == ["less"]
-    assert calls[0]["input"] == b"text"
-    assert calls[0]["check"] is True
-    assert calls[0]["stderr"] == subprocess.DEVNULL
+    assert [pager.kwargs["env"]["LESS"] for pager in pagers] == ["FRX", "-S"]
+    assert pagers[0].command == ["less"]
+    assert pagers[0].written == b"text"
+    assert pagers[0].kwargs["stdin"] == subprocess.PIPE
+    assert pagers[0].kwargs["stderr"] == subprocess.DEVNULL
 
 
-@pytest.mark.parametrize("error", [OSError("private launch diagnostic"), subprocess.CalledProcessError(1, "pager")])
-def test_pager_failures_are_safe_errors(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+@pytest.mark.parametrize("ending", ["interrupt", "quit_early"])
+def test_pager_owns_the_terminal_until_it_quits(monkeypatch: pytest.MonkeyPatch, ending: str) -> None:
     from fmind import cli
 
-    def fail(*args: object, **kwargs: object) -> None:
-        raise error
+    pager = _Pager(["less"], **{ending: True})
+    monkeypatch.setattr("subprocess.Popen", lambda command, **kwargs: pager)
+    cli._SystemPager(["less"]).show("text")
+    # After Ctrl-C, or a quit before reading everything, fmind still waits for the
+    # pager to restore the terminal instead of killing it.
+    assert pager.waits == (2 if ending == "interrupt" else 1)
+
+
+@pytest.mark.parametrize("failure", ["launch", "exit"])
+def test_pager_failures_are_safe_errors(monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+    from fmind import cli
+
+    error = OSError("private launch diagnostic")
+
+    def popen(command: list[str], **kwargs: Any) -> _Pager:
+        if failure == "launch":
+            raise error
+        return _Pager(command, code=1, **kwargs)
 
     monkeypatch.setattr(cli, "_pager_command", lambda: ["pager"])
-    monkeypatch.setattr("subprocess.run", fail)
+    monkeypatch.setattr("subprocess.Popen", popen)
     result = runner.invoke(app, ["--color", "read", "newer"])
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == "fmind: could not display the article with PAGER; check PAGER or use PAGER=cat\n"
     with pytest.raises(api.FmindError) as caught:
         cli._SystemPager(["pager"]).show("text")
-    assert caught.value.__cause__ is error
+    if failure == "launch":
+        assert caught.value.__cause__ is error
 
 
 def test_read_pages_on_an_interactive_terminal(monkeypatch: pytest.MonkeyPatch) -> None:

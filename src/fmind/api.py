@@ -21,6 +21,9 @@ PROFILE_URL = "https://www.fmind.dev/api/profile"
 TIMEOUT_SECONDS = 15.0
 # Bound memory use even when the origin serves an unexpected document.
 MAX_BYTES = 8 * 1024 * 1024
+# `--json` re-indents forwarded fields, so output grows with the square of their
+# nesting; the published profile nests four levels.
+MAX_DEPTH = 32
 USER_AGENT = f"fmind/{__version__} (+https://github.com/fmind/cli)"
 # Slugs reach a URL, so only the shape the site actually mints is accepted.
 SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -178,9 +181,11 @@ def _parse_profile(payload: bytes) -> dict[str, Any]:
     # Check keys and future fields too: JSON output forwards them even when the
     # renderer does not consume them. The decoder accepts surrogates and can turn
     # finite JSON literals such as 1e999 into infinity.
-    pending = [document]
+    pending = [(document, 0)]
     while pending:
-        value = pending.pop()
+        value, depth = pending.pop()
+        if depth > MAX_DEPTH:
+            raise FmindError(f"the profile endpoint returned a portfolio document nested over {MAX_DEPTH} levels")
         if isinstance(value, float) and not math.isfinite(value):
             raise FmindError("the profile endpoint returned a non-finite number")
         if isinstance(value, str):
@@ -189,10 +194,9 @@ def _parse_profile(payload: bytes) -> dict[str, Any]:
             except UnicodeEncodeError as error:
                 raise FmindError("the profile endpoint returned invalid Unicode") from error
         elif isinstance(value, dict):
-            pending.extend(value)
-            pending.extend(value.values())
+            pending.extend((item, depth + 1) for item in (*value, *value.values()))
         elif isinstance(value, list):
-            pending.extend(value)
+            pending.extend((item, depth + 1) for item in value)
     _validate(document, PROFILE_SHAPE, "profile")
     links = document["thesis"].get("links")
     if links is not None:

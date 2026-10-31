@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import sys
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import httpx2
@@ -16,9 +19,14 @@ from mcp.shared.exceptions import MCPError
 from typer.testing import CliRunner
 
 from fmind import mcp
-from fmind.api import FmindError, origin_url
+from fmind.api import origin_url
 from fmind.cli import app
 from tests.mcp_upstream import upstream
+
+
+def _text(content: object) -> str:
+    assert isinstance(content, types.TextContent | types.TextResourceContents)
+    return content.text
 
 
 def test_endpoint_follows_profile_origin(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -38,11 +46,10 @@ def test_forwarding() -> None:
             assert (await client.list_resources()).resources == (await remote.list_resources()).resources
             assert (await client.list_prompts()).prompts == (await remote.list_prompts()).prompts
             assert not (await client.list_resource_templates()).resource_templates
-            assert (await client.call_tool("echo", {"value": "example"})).content[0].text == "example"
-            assert (await client.read_resource("example://profile")).contents[0].text == "Synthetic profile"
-            assert (await client.get_prompt("brief", {"audience": "testers"})).messages[
-                0
-            ].content.text == "Brief for testers"
+            assert _text((await client.call_tool("echo", {"value": "example"})).content[0]) == "example"
+            assert _text((await client.read_resource("example://profile")).contents[0]) == "Synthetic profile"
+            prompt = await client.get_prompt("brief", {"audience": "testers"})
+            assert _text(prompt.messages[0].content) == "Brief for testers"
             assert (await client.call_tool("missing", {})).is_error
             assert (await client.call_tool("echo", {})).is_error
             with pytest.raises(MCPError):
@@ -110,11 +117,19 @@ def test_response_bound(monkeypatch: pytest.MonkeyPatch) -> None:
                 yield b"abc"
                 yield b"def"
 
+        class Reset(httpx2.AsyncByteStream):
+            async def __aiter__(self):
+                yield b"abc"
+                raise httpx2.ReadError("private diagnostic")
+
         monkeypatch.setattr(mcp, "MAX_BYTES", 5)
-        stream = mcp._BoundedStream(Chunks(), asyncio.get_running_loop().time() + 1)
-        with pytest.raises(FmindError, match="size limit"):
-            _ = [part async for part in stream]
-        await stream.aclose()
+        deadline = asyncio.get_running_loop().time() + 1
+        for chunks, message in ((Chunks(), "size limit"), (Reset(), "interrupted")):
+            stream = mcp._BoundedStream(chunks, deadline)
+            # A stream error is the one failure the SDK answers per request.
+            with pytest.raises(httpx2.StreamError, match=message):
+                _ = [part async for part in stream]
+            await stream.aclose()
 
     asyncio.run(run())
 
@@ -131,8 +146,11 @@ def test_http_transport_bound(monkeypatch: pytest.MonkeyPatch, encoding: str) ->
         monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=response))
         monkeypatch.setattr(mcp, "MAX_BYTES", 5)
         async with httpx2.AsyncClient(transport=mcp._BoundedTransport()) as client:
-            with pytest.raises(FmindError, match=r"size limit|uncompressed"):
-                await client.get("https://example.test/mcp")
+            if encoding == "identity":
+                with pytest.raises(httpx2.StreamError, match="size limit"):
+                    await client.get("https://example.test/mcp")
+            else:
+                assert (await client.get("https://example.test/mcp")).status_code == 502
         assert response.is_closed
 
     asyncio.run(run())
@@ -152,8 +170,7 @@ def test_http_headers_have_a_total_deadline(monkeypatch: pytest.MonkeyPatch) -> 
         monkeypatch.setattr(mcp, "TIMEOUT_SECONDS", 0.02)
         async with httpx2.AsyncClient(transport=mcp._BoundedTransport()) as client:
             async with asyncio.timeout(1):
-                with pytest.raises(httpx2.ReadTimeout):
-                    await client.get("https://example.test/mcp")
+                assert (await client.get("https://example.test/mcp")).status_code == 504
                 assert stopped.is_set()
 
     asyncio.run(run())
@@ -209,13 +226,64 @@ def test_legacy_http_body_stops_after_request_timeout(monkeypatch: pytest.Monkey
             # bridge shutdown, even when a legacy server ignores cancellation.
             await asyncio.wait_for(stopped.wait(), 0.5)
 
-    # The SDK may close its task group when the legacy POST fails. Its transport
-    # timeout is expected; the test's wait_for TimeoutError must still fail.
-    try:
-        asyncio.run(run())
-    except* httpx2.ReadTimeout:
-        pass
+    asyncio.run(run())
     assert stopped.is_set()
+
+
+@pytest.mark.parametrize("failure", ["size", "encoding", "connect", "reset"])
+def test_one_failed_exchange_leaves_the_bridge_serving(monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+    class Body(httpx2.AsyncByteStream):
+        """A network-like body: unlike `content=`, httpx2 has not read it in advance."""
+
+        def __init__(self, data: bytes, *, reset: bool = False) -> None:
+            self.data = data
+            self.reset = reset
+
+        async def __aiter__(self):
+            yield self.data
+            if self.reset:
+                raise httpx2.ReadError("private diagnostic")
+
+    http_app = upstream().streamable_http_app(stateless_http=True, json_response=True)
+    asgi = httpx2.ASGITransport(app=http_app)
+    broken = False
+
+    async def handle(_transport: object, request: httpx2.Request) -> httpx2.Response:
+        # Only the network hop is replaced; the bridge's own bounds still run.
+        if broken and failure == "connect":
+            raise httpx2.ConnectError("private diagnostic", request=request)
+        response = await asgi.handle_async_request(request)
+        if not broken:
+            return response
+        body = await response.aread()
+        json_type = {"content-type": "application/json"}
+        if failure == "size":
+            # Valid JSON-RPC with trailing whitespace, past the bound set below.
+            return httpx2.Response(200, headers=json_type, stream=Body(body + b" " * 2048), request=request)
+        if failure == "encoding":
+            headers = {**json_type, "content-encoding": "gzip"}
+            return httpx2.Response(200, headers=headers, stream=Body(gzip.compress(body)), request=request)
+        return httpx2.Response(200, headers=json_type, stream=Body(body[:10], reset=True), request=request)
+
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", handle)
+
+    async def run() -> None:
+        nonlocal broken
+        async with (
+            http_app.router.lifespan_context(http_app),
+            httpx2.AsyncClient(transport=mcp._BoundedTransport()) as http,
+            Client(streamable_http_client("http://127.0.0.1:8000/mcp", http_client=http), cache=None) as remote,
+            Client(mcp.create_bridge(remote), cache=None) as client,
+        ):
+            monkeypatch.setattr(mcp, "MAX_BYTES", 1024)
+            broken = True
+            with pytest.raises(MCPError) as caught:
+                await client.call_tool("echo", {"value": "lost"})
+            assert "private" not in str(caught.value)
+            broken = False
+            assert _text((await client.call_tool("echo", {"value": "served"})).content[0]) == "served"
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
@@ -231,8 +299,8 @@ def test_stdio_subprocess(mode: str, tmp_path) -> None:
 
             async with Client(stdio_client(params, errlog=errors), mode=mode, cache=None) as client:
                 assert [tool.name for tool in (await client.list_tools()).tools] == ["echo"]
-                assert (await client.call_tool("echo", {"value": "stdio"})).content[0].text == "stdio"
-                assert (await client.read_resource("example://profile")).contents[0].text == "Synthetic profile"
+                assert _text((await client.call_tool("echo", {"value": "stdio"})).content[0]) == "stdio"
+                assert _text((await client.read_resource("example://profile")).contents[0]) == "Synthetic profile"
                 assert (await client.get_prompt("brief", {"audience": "hosts"})).messages
             errors.seek(0)
             assert errors.read() == ""
@@ -261,6 +329,28 @@ def test_connection_failure_is_safe(monkeypatch: pytest.MonkeyPatch) -> None:
         result.stderr
         == "fmind: could not connect to the remote MCP server; check your connection and FMIND_PROFILE_URL\n"
     )
+
+
+def test_failure_after_connecting_does_not_blame_the_remote(monkeypatch: pytest.MonkeyPatch) -> None:
+    @asynccontextmanager
+    async def connected(*args: object, **kwargs: object) -> AsyncGenerator[tuple[None, None]]:
+        yield None, None
+
+    class Bridge:
+        def create_initialization_options(self) -> None:
+            return None
+
+        async def run(self, *args: object) -> None:
+            # What the SDK's stdio writer raises once the host closes stdout.
+            raise BrokenPipeError(32, "Broken pipe")
+
+    monkeypatch.setattr(mcp, "Client", connected)
+    monkeypatch.setattr(mcp, "stdio_server", connected)
+    monkeypatch.setattr(mcp, "create_bridge", lambda remote: Bridge())
+    result = CliRunner().invoke(app, ["mcp"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "fmind: the MCP bridge stopped unexpectedly after connecting\n"
 
 
 def test_missing_extra(monkeypatch: pytest.MonkeyPatch) -> None:
