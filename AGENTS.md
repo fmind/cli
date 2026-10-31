@@ -8,8 +8,9 @@ Thin Python CLI that renders documents published by `www.fmind.dev`. It has no c
 
 - `mise install` — install the pinned project toolchain.
 - `mise run install` — locked all-group, all-extra `uv` sync and Lefthook install.
-- `mise run format` — Ruff imports/format and dprint.
-- `mise run check` — lockfile, Ruff, ty, dprint, workflow lint/audit, secret scan, and dependency audit, in parallel.
+- `mise run format` — Ruff imports/format and dprint; `format:python` and `format:dprint` also take file paths.
+- `mise run check` — `check:local` (lockfile, Ruff, ty, dprint, jactionlint workflow audit, betterleaks scan of recent commits and staged changes) and `check:network` (dependency audit), in parallel.
+- `mise run check:leaks:full` — full-history secret scan; needs a complete clone.
 - `mise run test` — offline pytest with branch coverage of at least 85%.
 - `mise run smoke` — live API/article and MCP compatibility checks, run daily, on main pushes, manually, and before release; never a merge gate.
 - `mise run build` — build the wheel and source distribution.
@@ -40,5 +41,5 @@ Thin Python CLI that renders documents published by `www.fmind.dev`. It has no c
 - **Presentation.** Use terminal-default body text and a single blue accent; community and credential entries stack vertically with published links. Render links with `render._link` (never folded or cropped) and separate entries with `render._entry`, not `Padding`, which crops long lines. `whoami` JSON includes the featured `experience` list; credential JSON groups `certifications`, `thesis`, and `specializations`; project JSON groups `open_source` and `youtube_series`. Keep text and JSON information consistent and document schema migrations.
 - **MCP.** Forward remote tools, resources, and prompts without copying their schemas or content. Stdio stdout is protocol-only. The upstream uses finite POST responses and rejects GET/HEAD notification streams with 405; clients must continue normal request/response operations without a background stream. Disable SDK caching, bound remote responses and request duration, and propagate cancellation. Offline protocol tests use synthetic upstream data; `mise run smoke` makes a real subprocess call through the bridge.
 - **Compatibility monitoring.** `.github/workflows/compatibility.yml` reuses `mise run smoke` independently of offline CI. Discover commands and MCP catalogs instead of maintaining content snapshots. Exercise tool calls, resource reads, and prompts, and report API and MCP failures independently. Content additions need no CLI release; removed or changed consumed fields need a tested client update.
-- **Hooks.** Pre-commit runs `mise run check` without writing or staging files; pre-push runs `mise run test`. Run `mise run format` explicitly before committing.
+- **Hooks.** Pre-commit formats the staged files, restages them, and runs `mise run check:local`, so an offline commit works; pre-push runs `mise run check:network` and `mise run test` in parallel.
 - **Commits and releases.** Conventional Commits. Follow the [release skill](.agents/skills/release/SKILL.md) for a release; CD reruns every CI job and the live smoke check on the `v*` tag before PyPI Trusted Publishing.

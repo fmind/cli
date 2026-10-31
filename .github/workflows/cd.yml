@@ -14,8 +14,9 @@ jobs:
     name: CI
     # The gate, the Python compatibility matrix, and the dependency floors back the
     # published promises, so the tagged commit passes all of them before publishing.
-    # A job-level call already runs the caller's commit; actionlint 1.7.12 rejects `$/`.
-    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+    # A job-level call already runs the caller's tagged commit, so `./` is that code.
+    # jactionlint ignore=self-repository
+    uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
   build:

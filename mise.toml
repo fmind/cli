@@ -1,16 +1,15 @@
-# https://mise.jdx.dev/configuration.html
+# Docs: https://mise.jdx.dev/configuration.html
 [settings.task]
 run_auto_install = false
 
 [tools]
 "aqua:astral-sh/uv" = "0.13.6"
-actionlint = "1.7.12"
+betterleaks = "1.9.0"
 dprint = "0.64.3"
-gitleaks = "8.30.1"
+jactionlint = "2.4.0"
 lefthook = "2.2.2"
 python = "3.14.10"
 shellcheck = "0.11.0"
-zizmor = "1.31.1"
 
 [tasks.all]
 alias = "a"
@@ -25,11 +24,19 @@ run = "uv build --clear"
 [tasks.check]
 alias = "c"
 description = "Run all static checks in parallel"
-depends = ["check:actions", "check:format", "check:leaks", "check:lint", "check:types", "check:vuln"]
+depends = ["check:local", "check:network"]
+
+[tasks."check:local"]
+description = "Run the static checks that need no network (pre-commit)"
+depends = ["check:actions", "check:format", "check:leaks", "check:lint", "check:types"]
+
+[tasks."check:network"]
+description = "Run the checks that download vulnerability data (pre-push)"
+depends = ["check:vuln"]
 
 [tasks."check:actions"]
-description = "Lint and audit GitHub Actions workflows (actionlint + zizmor)"
-run = ["actionlint", "zizmor --offline .github/"]
+description = "Lint and audit GitHub Actions workflows (jactionlint)"
+run = "jactionlint"
 
 [tasks."check:format"]
 alias = "cf"
@@ -38,11 +45,17 @@ run = ["uv lock --check", "uv run --locked --extra mcp ruff format --check src t
 
 [tasks."check:leaks"]
 alias = "cs"
-description = "Audit recent commits and the working tree for leaked secrets (gitleaks)"
+description = "Scan the last 100 commits and the staged changes for leaked secrets (betterleaks)"
+# The staged scan covers what the next commit adds without reading ignored caches,
+# which copy the synthetic credentials of the tests.
 run = [
-  'gitleaks git --redact=100 --log-opts="--max-count=100" --verbose',
-  "gitleaks dir . --redact=100 --verbose",
+  'betterleaks git --redact=100 --log-opts="--max-count=100" --verbose --no-banner',
+  "betterleaks git --staged --redact=100 --verbose --no-banner",
 ]
+
+[tasks."check:leaks:full"]
+description = "Scan the complete Git history for leaked secrets (weekly in security.yml; needs a full clone)"
+run = "betterleaks git --redact=100 --verbose --no-banner"
 
 [tasks."check:lint"]
 alias = "cl"
@@ -65,11 +78,22 @@ run = "rm -rf .coverage .pytest_cache/ .ruff_cache/ .ty_cache/ dist/ htmlcov/"
 [tasks.format]
 alias = "f"
 description = "Format all sources and documents"
-run = [
-  "uv run --locked --extra mcp ruff check --select I --fix src tests",
-  "uv run --locked --extra mcp ruff format src tests",
-  "dprint fmt",
-]
+depends = ["format:dprint", "format:python"]
+
+[tasks."format:dprint"]
+description = "Format JSON, Markdown, TOML, and YAML with dprint, or only the given files"
+run = "dprint fmt --allow-no-files"
+
+# Lefthook passes staged files; mise hands variadic arguments over as one shell-quoted
+# string, which `eval "set -- ..."` splits back safely. Without files, Ruff formats the project.
+[tasks."format:python"]
+description = "Sort imports and format Python sources, or only the given files"
+usage = 'arg "[files]..."'
+run = '''
+eval "set -- $usage_files"
+uv run --locked --extra mcp ruff check --select I --fix --force-exclude "$@"
+uv run --locked --extra mcp ruff format --force-exclude "$@"
+'''
 
 [tasks.install]
 alias = "i"

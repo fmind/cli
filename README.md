@@ -116,14 +116,14 @@ From this checkout, run `uv run --extra mcp fmind mcp`. The optional extra uses 
 mise install       # install the pinned toolchain
 mise run install   # sync the locked environment and install hooks
 mise run format    # ruff imports and format, dprint
-mise run check     # lockfile, ruff, ty, dprint, actionlint, zizmor, gitleaks, dependency audit
+mise run check     # lockfile, ruff, ty, dprint, jactionlint, betterleaks, dependency audit
 mise run test      # offline pytest with branch coverage
 mise run smoke     # exercise every command against the live site
 mise run build     # build the wheel and source distribution
 mise run all       # format, check, test, build — the gate CI runs
 ```
 
-The pre-commit hook runs checks without changing or staging files; run `mise run format` before committing. The pre-push hook runs the offline tests. CI runs the full gate on the pinned Python, tests Python 3.11–3.15 for compatibility, and tests the declared dependency floors with `--resolution lowest-direct` on Python 3.11.
+The pre-commit hook formats staged files and runs the offline checks (`mise run check:local`). The pre-push hook runs the dependency audit (`mise run check:network`) and the offline tests. CI runs the full gate on the pinned Python, tests Python 3.11–3.15 for compatibility, and tests the declared dependency floors with `--resolution lowest-direct` on Python 3.11.
 
 A release tag must match the version in `pyproject.toml` (for example, `v0.1.0`). CD reruns every CI job for that tag (the gate, the Python versions, and the dependency floors) and checks the live commands before publishing through PyPI Trusted Publishing. The live smoke check is a release check, not a pull-request gate.
 

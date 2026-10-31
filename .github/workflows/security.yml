@@ -28,6 +28,6 @@ jobs:
         with:
           version: 2026.10.21 # pinned mise; bump deliberately with mise.lock tooling
       - name: Scan complete Git history
-        run: gitleaks git --redact=100 --verbose
+        run: mise run check:leaks:full
       - name: Audit locked dependencies
         run: mise run check:vuln

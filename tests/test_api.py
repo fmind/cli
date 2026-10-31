@@ -180,7 +180,7 @@ def test_empty_sections_are_valid(document: dict[str, Any]) -> None:
         "http://example.test:bad/api/profile",
         "http://example.test:99999/api/profile",
         "http://example.test/\nprofile",
-        "https://user:secret@example.test/profile",
+        "https://user:secret@example.test/profile",  # betterleaks:allow (synthetic credential)
     ],
 )
 def test_rejects_invalid_http_urls(url: str) -> None:

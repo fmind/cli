@@ -1,0 +1,5 @@
+# Docs: https://github.com/betterleaks/betterleaks/tree/v1.x
+# Betterleaks 1.x reads gitleaks-style fingerprints (commit:path:rule:line); v2 changes the format.
+# Synthetic credential URL on an RFC 2606 domain, used by test_rejects_invalid_http_urls;
+# the current line carries a betterleaks:allow comment instead.
+2ab645c9fde82aabff8bfe85c1d394a37f402824:tests/test_api.py:generic-credential-uri:129
