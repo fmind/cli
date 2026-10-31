@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.5] - 2026-10-31
+
+### 🐛 Bug Fixes
+
+- _(read)_ Leave Ctrl-C to the pager so `less` restores the terminal, and print directly when `TERM` cannot drive a full-screen pager
+- _(mcp)_ Keep `fmind mcp` serving when one upstream exchange fails, times out, or exceeds its bounds
+- _(cli)_ Trim forced-colour output, bound JSON nesting, keep the fetched Markdown in `read --json`, and print a line for empty sections
+- _(search)_ Accept unquoted multi-word queries and print a runnable `read` hint
+
+### 🧹 Miscellaneous
+
+- _(deps)_ Lock pydantic 2.14.2 for its validation-bypass fixes; run the full CI matrix, including Python 3.15, before publishing
+
 ## [2.0.4] - 2026-10-29
 
 ### 🐛 Bug Fixes
