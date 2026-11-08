@@ -78,7 +78,7 @@ def _rows(pairs: list[tuple[str, RenderableType]]) -> Table:
 
 
 def whoami(doc: dict[str, Any]) -> RenderableType:
-    """Identity, featured experience, availability, and contact."""
+    """Identity, location, featured experience, availability, contact, and social profiles."""
     meta = doc["metadata"]
     experience = doc.get("experience") or []
     mission = Text("—")
@@ -97,7 +97,8 @@ def whoami(doc: dict[str, Any]) -> RenderableType:
             [
                 ("Name", Text(f"{meta['name']} ({meta['alternate_name']})", style="bold")),
                 ("Role", Text(meta["job_title"])),
-                ("Headline", Text(meta["headline_primary"])),
+                ("Headline", Text("\n".join(filter(None, (meta["headline_primary"], meta["headline_secondary"]))))),
+                ("Location", Text(meta["work_location"])),
                 ("Experience", mission),
                 ("Status", status),
             ]
@@ -106,7 +107,11 @@ def whoami(doc: dict[str, Any]) -> RenderableType:
         # with the same 11-character label and two-space gap.
         *(
             Text.assemble((f"{label:<13}", ACCENT), _link(value), no_wrap=True, overflow="ignore")
-            for label, value in (("Contact", meta["email"]), ("Website", meta["site_url"]))
+            for label, value in (
+                ("Contact", meta["email"]),
+                ("Website", meta["site_url"]),
+                *((social["name"], social["url"]) for social in meta["socials"]),
+            )
         ),
     )
 
@@ -202,6 +207,33 @@ def articles(posts: list[dict[str, Any]], *, footer: str = "") -> RenderableType
     return Group(*blocks, Text(footer)) if footer else Group(*blocks)
 
 
+def tags(doc: dict[str, Any]) -> RenderableType:
+    """The site's article tags, each with its article count and the search that lists them."""
+    blocks: list[RenderableType] = []
+    for tag in doc["tags"]:
+        # Case-insensitive, like `fmind search --tag`.
+        name = tag["name"].lower()
+        count = sum(name in {t.lower() for t in post["tags"]} for post in doc["articles"])
+        hint = Text(f"{count} article{'' if count == 1 else 's'} · fmind search --tag ")
+        hint.append(tag["name"], style="bold")
+        blocks.append(_entry(Text(tag["name"], style=ACCENT), Text(tag["description"]), hint))
+    return _listing(blocks, "no tag published")
+
+
+def news(editions: list[dict[str, Any]], *, footer: str = "") -> RenderableType:
+    """Daily news editions, each with its curated links."""
+    blocks: list[RenderableType] = []
+    for edition in editions:
+        blocks += [Text(edition["title"], style=ACCENT), _link(edition["url"]), Text()]
+        blocks += [
+            _entry(Text(item["title"], style="bold"), Text(item["description"]), _link(item["url"]))
+            for item in edition["items"]
+        ]
+    if not blocks:
+        return Text("no news edition matches")
+    return Group(*blocks, Text(footer)) if footer else Group(*blocks)
+
+
 def article_body(markdown: str) -> RenderableType:
     """One article, rendered from its published Markdown source.
 
@@ -229,9 +261,13 @@ def papers(doc: dict[str, Any]) -> RenderableType:
     if thesis.get("links"):
         parts.append(Text())
     parts += [Text("PUBLICATIONS", style=ACCENT), Text()]
-    parts += [
-        _entry(Text(paper["title"], style="bold"), Text(paper["venue"]), _link(paper["url"])) for paper in doc["papers"]
-    ]
+    for paper in doc["papers"]:
+        lines: list[RenderableType] = [Text(paper["title"], style="bold"), Text(paper["venue"]), _link(paper["url"])]
+        if paper["code"]:
+            code = Text(f"  {paper['code_label'] or 'Code'}  ", no_wrap=True, overflow="ignore")
+            code.append_text(_link(paper["code"]))
+            lines.append(code)
+        parts.append(_entry(*lines))
     return Group(*parts)
 
 

@@ -2,6 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,7 +13,15 @@ from tests import smoke
 @pytest.fixture
 def remote(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     client = AsyncMock()
-    names = ["get_profile", "search_articles", "get_article", "compare_llm_hosting", "compare_mcp_context_cost"]
+    names = [
+        "get_profile",
+        "search_articles",
+        "get_article",
+        "search_news",
+        "get_news",
+        "compare_llm_hosting",
+        "compare_mcp_context_cost",
+    ]
     client.list_tools.return_value = SimpleNamespace(
         tools=[SimpleNamespace(name=name, annotations=SimpleNamespace(read_only_hint=True)) for name in names],
         next_cursor=None,
@@ -30,10 +39,11 @@ def remote(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     client.__aenter__.return_value = client
     monkeypatch.setattr(smoke, "Client", lambda *args, **kwargs: client)
     monkeypatch.setattr(smoke, "load_profile", lambda: {"articles": [{"slug": "fresh-article"}]})
+    monkeypatch.setattr(smoke, "load_news", lambda: {"editions": [{"slug": "2024-08-16"}]})
     return client
 
 
-def test_mcp_checks_article_and_calculator_with_live_inputs(remote: AsyncMock) -> None:
+def test_mcp_checks_articles_news_and_calculator_with_live_inputs(remote: AsyncMock) -> None:
 
     asyncio.run(smoke.smoke_mcp())
 
@@ -41,6 +51,8 @@ def test_mcp_checks_article_and_calculator_with_live_inputs(remote: AsyncMock) -
         ("get_profile", {}),
         ("search_articles", {"query": "compatibility", "limit": 1}),
         ("get_article", {"slug": "fresh-article"}),
+        ("search_news", {"query": "compatibility", "limit": 1}),
+        ("get_news", {"slug": "2024-08-16"}),
         ("compare_llm_hosting", {"parameters": {}}),
         ("compare_mcp_context_cost", {}),
     ]
@@ -91,6 +103,7 @@ def test_checks_every_portfolio_variant(
     assert "fmind whoami --json" in output.out
     assert "fmind --json whoami" in output.out
     assert "fmind read newer --raw" in output.out
+    assert "ok    fmind news 2024-08-16 --json\n" in output.out
     assert not output.err
     mcp.assert_awaited_once()
 
@@ -118,3 +131,17 @@ def test_api_and_mcp_fail_independently(
     error = capsys.readouterr().err
     assert ("FAIL  API" if api_fails else "FAIL  MCP") in error
     assert "private" not in error
+
+
+def test_mcp_news_read_needs_a_published_edition(remote: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(smoke, "load_news", lambda: {"editions": []})
+    with pytest.raises(RuntimeError, match="no news edition for the MCP read check"):
+        asyncio.run(smoke.smoke_mcp())
+
+
+def test_portfolio_checks_need_a_published_edition(
+    offline: None, news_archive: dict[str, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    news_archive["editions"] = []
+    with pytest.raises(RuntimeError, match="lists no news edition"):
+        smoke.smoke_portfolio()

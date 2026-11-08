@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### 🚀 Features
+
+- _(news)_ Add `fmind news [query...]` for the website's daily curated links: the latest edition by default, `--limit` editions, and search terms that keep only matching links
+- _(tags)_ Add `fmind tags`, listing the article tags with their descriptions, article counts, and `search --tag` hint
+- _(whoami)_ Show the secondary headline, work location, and published social profiles
+- _(papers)_ Link each paper's published code repository
+
+### 🐛 Bug Fixes
+
+- _(smoke)_ Read a live news slug for the website's new `get_news` MCP tool, which made the compatibility check fail
+
+### 🧹 Miscellaneous
+
+- _(deps)_ Upgrade the pinned tools, Python dependencies, dprint plugins, and GitHub Actions; run the gate on Python 3.15 and test Python 3.11–3.14 for compatibility
+
 ## [2.0.5] - 2026-10-31
 
 ### 🐛 Bug Fixes

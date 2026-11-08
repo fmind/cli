@@ -34,6 +34,8 @@ SECTIONS = [
     "projects",
     "sites",
     "articles",
+    "tags",
+    "news",
     "hire",
 ]
 
@@ -59,6 +61,7 @@ def test_section_renders(section: str) -> None:
         ("projects", ["open_source", "youtube_series"], "no project published"),
         ("sites", ["site_pages"], "no interactive site published"),
         ("hire", ["services"], "no service published"),
+        ("tags", ["tags"], "no tag published"),
     ],
 )
 def test_empty_sections_say_so(document: dict[str, Any], section: str, keys: list[str], message: str) -> None:
@@ -85,7 +88,7 @@ def test_whoami_needs_only_current_website_fields() -> None:
         for row in rows
         if row in {"Name", "Role", "Headline", "Experience", "Degree", "Status", "Location", "Contact", "Website"}
     ]
-    assert fields == ["Name", "Role", "Headline", "Experience", "Status", "Contact", "Website"]
+    assert fields == ["Name", "Role", "Headline", "Location", "Experience", "Status", "Contact", "Website"]
 
 
 def test_skills_renders_the_published_titles(document: dict[str, Any]) -> None:
@@ -233,6 +236,83 @@ def test_papers_shows_the_thesis_and_publications() -> None:
     assert "Ground truth" in output
     assert "Example Paper" in output
     assert "Example Conference" in output
+    assert "  Example Paper  https://example.test/paper-code\n" in output, "each paper links its code"
+
+
+def test_papers_without_code_show_no_code_row(document: dict[str, Any]) -> None:
+    document["papers"][0].update(code="", code_label="")
+    output = runner.invoke(app, ["--no-color", "papers"]).output
+    assert "Example Conference\nhttps://orbilu.example/example-paper\n\n" in output
+
+
+def test_papers_label_unnamed_code(document: dict[str, Any]) -> None:
+    document["papers"][0]["code_label"] = ""
+    output = runner.invoke(app, ["--no-color", "papers"]).output
+    assert "  Code  https://example.test/paper-code\n" in output
+
+
+def test_whoami_shows_location_secondary_headline_and_socials(document: dict[str, Any]) -> None:
+    output = runner.invoke(app, ["--no-color", "whoami"], terminal_width=120).output
+    assert "Example City" in output
+    assert "Example credentials" in output
+    assert "Code Host    https://code.example.test/alex\n" in output
+
+
+def test_whoami_skips_an_empty_secondary_headline(document: dict[str, Any]) -> None:
+    document["metadata"]["headline_secondary"] = ""
+    output = runner.invoke(app, ["--no-color", "whoami"], terminal_width=120).output
+    assert "Headline     Example expertise\nLocation" in output
+
+
+def test_tags_count_articles_and_show_the_search(document: dict[str, Any]) -> None:
+    document["articles"][1]["tags"].append("agent")
+    output = runner.invoke(app, ["--no-color", "tags"]).output
+    assert "Agent\nd\n2 articles · fmind search --tag Agent\n" in output, "counts match --tag, ignoring case"
+    assert "1 article · fmind search --tag LLM\n" in output
+
+
+def test_news_shows_the_latest_edition_by_default() -> None:
+    result = runner.invoke(app, ["--no-color", "news"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("August 16, 2024\nhttps://example.test/news/2024-08-16/\n\nAgents\n")
+    assert "Python" in result.stdout
+    assert "Summit" not in result.stdout
+    assert result.stdout.endswith("1 shown · 3 editions · https://example.test/news/\n")
+
+
+def test_news_terms_search_further_back_and_keep_matching_links() -> None:
+    result = runner.invoke(app, ["--no-color", "news", "agent"])
+    assert result.exit_code == 0, result.output
+    assert "Agents" in result.stdout
+    assert "Keynote" in result.stdout, "a search reads more than today's edition"
+    assert "Python" not in result.stdout, "non-matching links are dropped"
+    assert "2 shown · 3 editions" in result.stdout
+
+
+def test_news_limit_bounds_editions() -> None:
+    payload = json.loads(runner.invoke(app, ["news", "--limit", "2", "--json"]).stdout)
+    assert [edition["slug"] for edition in payload] == ["2024-08-16", "2024-08-15-summit"]
+    assert json.loads(runner.invoke(app, ["news", "agent", "--limit", "1", "--json"]).stdout)[0]["slug"] == (
+        "2024-08-16"
+    )
+
+
+def test_news_json_keeps_the_published_fields(news_archive: dict[str, Any]) -> None:
+    payload = json.loads(runner.invoke(app, ["--json", "news", "2024-07-01"]).stdout)
+    assert payload == [news_archive["editions"][2]]
+
+
+def test_news_without_a_match_says_so_and_still_succeeds() -> None:
+    result = runner.invoke(app, ["--no-color", "news", "absent"])
+    assert result.exit_code == 0
+    assert result.stdout == "no news edition matches\n"
+
+
+def test_news_failures_are_one_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("fmind.api._download", lambda url, accept="": b"[]")
+    result = runner.invoke(app, ["news"])
+    assert result.exit_code == 1
+    assert result.stderr == "fmind: the news endpoint returned an invalid news archive at news\n"
 
 
 def test_sites_lists_the_published_tools() -> None:
@@ -496,7 +576,8 @@ def test_identity_and_community_remain_readable_at_40_columns(
     assert document["leadership"][0]["organization"] in community.stdout
     assert document["leadership"][0]["description"] in community.stdout
     for output in (identity.stdout, community.stdout):
-        assert all(len(line) <= 40 for line in output.splitlines())
+        # Links are never folded, so only a line ending in one may run past the width.
+        assert all(len(line) <= 40 or line.split()[-1].startswith("https://") for line in output.splitlines())
         assert "\x1b" not in output
 
 

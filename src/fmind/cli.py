@@ -16,13 +16,13 @@ import typer
 from rich.console import Console, RenderableType
 from rich.pager import Pager
 
-from fmind import __version__, articles, render
-from fmind.api import CONTROL_PATTERN, FmindError, load_article, load_profile
+from fmind import __version__, articles, news, render
+from fmind.api import CONTROL_PATTERN, FmindError, load_article, load_news, load_profile
 
 app = typer.Typer(
     name="fmind",
-    help="Read Médéric Hurier's (Fmind) portfolio from the terminal. Every command renders the live "
-    "profile published at https://www.fmind.dev/api/profile. Without a command, show the whoami card. "
+    help="Read Médéric Hurier's (Fmind) portfolio and daily news from the terminal. Every command renders "
+    "live documents published by https://www.fmind.dev. Without a command, show the whoami card. "
     "Use mcp for the stdio MCP bridge.",
     add_completion=False,
     rich_markup_mode="rich",
@@ -69,6 +69,14 @@ def _doc() -> dict[str, Any]:
     """Load the profile, reporting a clear error instead of a traceback."""
     try:
         return load_profile()
+    except FmindError as error:
+        raise _fail(str(error)) from error
+
+
+def _news() -> dict[str, Any]:
+    """Load the news archive, reporting a clear error instead of a traceback."""
+    try:
+        return load_news()
     except FmindError as error:
         raise _fail(str(error)) from error
 
@@ -174,7 +182,7 @@ def _emit(ctx: typer.Context, body: RenderableType, payload: Any, *, as_json: bo
 
 @app.command()
 def whoami(ctx: typer.Context, as_json: JsonOption = False) -> None:
-    """Name, featured experience, availability, and contact."""
+    """Name, headline, location, featured experience, availability, and contact."""
     doc = _doc()
     _emit(
         ctx,
@@ -228,7 +236,7 @@ def community(ctx: typer.Context, as_json: JsonOption = False) -> None:
 
 @app.command()
 def papers(ctx: typer.Context, as_json: JsonOption = False) -> None:
-    """The doctorate and the peer-reviewed publications."""
+    """The doctorate and the peer-reviewed publications, with their code."""
     doc = _doc()
     _emit(ctx, render.papers(doc), {"thesis": doc["thesis"], "papers": doc["papers"]}, as_json=as_json)
 
@@ -310,6 +318,35 @@ def read(
     # The fetched article wins over any same-named field in the index entry.
     payload = {**(post or {}), "slug": resolved, "markdown": markdown}
     _emit(ctx, render.article_body(markdown), payload, as_json=as_json, page=True)
+
+
+@app.command("tags")
+def list_tags(ctx: typer.Context, as_json: JsonOption = False) -> None:
+    """The article tags that search --tag accepts."""
+    doc = _doc()
+    _emit(ctx, render.tags(doc), doc["tags"], as_json=as_json)
+
+
+@app.command("news")
+def list_news(
+    ctx: typer.Context,
+    query: Annotated[
+        list[str] | None,
+        typer.Argument(help="Terms to match against link titles, domains, summaries, URLs, and edition dates."),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", min=1, max=200, help="How many editions to show: 1 by default, 10 with terms."),
+    ] = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Daily curated links, newest edition first; terms keep only matching links."""
+    archive = _news()
+    terms = " ".join(query or [])
+    # Today's edition is the common read; a search looks further back by default.
+    found = news.search(archive["editions"], terms, limit=limit or (10 if terms.strip() else 1))
+    footer = f"{len(found)} shown · {len(archive['editions'])} editions · {archive['url']}"
+    _emit(ctx, render.news(found, footer=footer), found, as_json=as_json)
 
 
 @app.command()

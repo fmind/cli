@@ -1,4 +1,4 @@
-"""Shared fixtures: a synthetic profile document and offline network boundary."""
+"""Shared fixtures: synthetic profile and news documents and an offline network boundary."""
 
 from __future__ import annotations
 
@@ -19,8 +19,11 @@ def document() -> dict[str, Any]:
             "alternate_name": "Example",
             "job_title": "Software Architect",
             "headline_primary": "Example expertise",
+            "headline_secondary": "Example credentials",
+            "work_location": "Example City",
             "email": "alex@example.test",
             "site_url": "https://example.test",
+            "socials": [{"name": "Code Host", "url": "https://code.example.test/alex", "icon": "code"}],
         },
         "biography": ["First paragraph.", "Second paragraph."],
         "leadership": [{"role": "Ambassador", "organization": "Example Foundation", "description": "d", "url": "u"}],
@@ -142,6 +145,58 @@ def document() -> dict[str, Any]:
     }
 
 
+@pytest.fixture
+def news_archive() -> dict[str, Any]:
+    """A news archive with the same shape as /api/news, newest edition first."""
+
+    def item(title: str, domain: str, description: str) -> dict[str, str]:
+        return {
+            "title": title,
+            "url": f"https://{domain}/{title.lower()}",
+            "domain": domain,
+            "description": description,
+        }
+
+    def edition(slug: str, title: str, topic: str, items: list[dict[str, str]]) -> dict[str, Any]:
+        return {
+            "slug": slug,
+            "date": slug[:10],
+            "updated": f"{slug[:10]}T00:00:00Z",
+            "title": title,
+            "topic": topic,
+            "description": f"{len(items)} curated links.",
+            "url": f"https://example.test/news/{slug}/",
+            "markdown_url": f"https://example.test/news/{slug}.md",
+            "items": items,
+        }
+
+    return {
+        "title": "Example news",
+        "description": "Daily links.",
+        "url": "https://example.test/news/",
+        "feed_url": "https://example.test/news/feed.xml",
+        "updated": "2024-08-16T00:00:00Z",
+        "editions": [
+            edition(
+                "2024-08-16",
+                "August 16, 2024",
+                "",
+                [
+                    item("Agents", "agents.example", "Agent sandboxing release."),
+                    item("Python", "python.example", "Interpreter release."),
+                ],
+            ),
+            edition(
+                "2024-08-15-summit",
+                "Summit: August 15, 2024",
+                "Summit",
+                [item("Keynote", "summit.example", "Agent platform keynote.")],
+            ),
+            edition("2024-07-01", "July 1, 2024", "", [item("Security", "security.example", "Supply chain advisory.")]),
+        ],
+    }
+
+
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """An accidental real HTTP request fails the offline suite immediately."""
@@ -155,12 +210,14 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def offline(monkeypatch: pytest.MonkeyPatch, document: dict[str, Any]) -> None:
-    """Serve the fixture document instead of reaching the network."""
+def offline(monkeypatch: pytest.MonkeyPatch, document: dict[str, Any], news_archive: dict[str, Any]) -> None:
+    """Serve the fixture documents instead of reaching the network."""
 
     def fake(url: str, accept: str = "application/json") -> bytes:
         if url.endswith(".md"):
             return MARKDOWN.encode()
+        if url.endswith("/api/news"):
+            return json.dumps(news_archive).encode()
         return json.dumps(document).encode()
 
     monkeypatch.setattr("fmind.api._download", fake)

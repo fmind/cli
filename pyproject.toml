@@ -2,13 +2,13 @@
 [project]
 name = "fmind"
 version = "2.0.5"
-description = "Read Médéric Hurier's (Fmind) portfolio from the terminal."
+description = "Read Médéric Hurier's (Fmind) portfolio and daily news from the terminal."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Médéric Hurier", email = "contact@fmind.dev" }]
 requires-python = ">=3.11"
-keywords = ["portfolio", "cli", "fmind", "resume", "articles"]
+keywords = ["portfolio", "cli", "fmind", "resume", "articles", "news", "mcp"]
 classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",

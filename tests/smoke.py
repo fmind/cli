@@ -13,7 +13,7 @@ from mcp import Client, StdioServerParameters
 from mcp_types import TextResourceContents
 from typer.testing import CliRunner
 
-from fmind.api import _parse_profile, load_profile
+from fmind.api import _parse_profile, load_news, load_profile
 from fmind.cli import app
 
 
@@ -51,7 +51,7 @@ async def smoke_mcp() -> None:
             if not tool.annotations or not tool.annotations.read_only_hint:
                 raise RuntimeError(f"MCP tool {tool.name} is no longer advertised as read-only")
             # The SDK validates results against live output schemas. Discover
-            # article slugs from the profile instead of storing portfolio facts.
+            # slugs from the live documents instead of storing portfolio facts.
             arguments = {}
             if tool.name == "search_articles":
                 arguments = {"query": "compatibility", "limit": 1}
@@ -60,6 +60,13 @@ async def smoke_mcp() -> None:
                 if not posts:
                     raise RuntimeError("the website lists no article for the MCP read check")
                 arguments = {"slug": posts[0]["slug"]}
+            elif tool.name == "search_news":
+                arguments = {"query": "compatibility", "limit": 1}
+            elif tool.name == "get_news":
+                editions = load_news()["editions"]
+                if not editions:
+                    raise RuntimeError("the website lists no news edition for the MCP read check")
+                arguments = {"slug": editions[0]["slug"]}
             elif tool.name == "compare_llm_hosting":
                 arguments = {"parameters": {}}
             print(f"check MCP tools/call {tool.name}", flush=True)
@@ -99,6 +106,14 @@ def smoke_portfolio() -> None:
     sections = [[command.name or getattr(command.callback, "__name__", "")] for command in app.registered_commands]
     commands = [command for command in sections if command[0] not in {"mcp", "read", "search"}]
     commands += [["search", posts[0]["slug"]], ["read", posts[0]["slug"]]]
+    # The latest edition's date selects it whole, so this search always has a result.
+    latest_news = runner.invoke(app, ["news", "--json"])
+    if latest_news.exit_code != 0:
+        raise RuntimeError(f"could not read the live news archive: {latest_news.output.strip()}")
+    editions = json.loads(latest_news.stdout)
+    if not editions:
+        raise RuntimeError("the website lists no news edition")
+    commands.append(["news", editions[0]["slug"]])
     variants = [
         [],
         ["--json"],

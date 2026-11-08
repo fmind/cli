@@ -18,6 +18,7 @@ from typing import Any
 from fmind import __version__
 
 PROFILE_URL = "https://www.fmind.dev/api/profile"
+NEWS_PATH = "/api/news"
 TIMEOUT_SECONDS = 15.0
 # Bound memory use even when the origin serves an unexpected document.
 MAX_BYTES = 8 * 1024 * 1024
@@ -32,7 +33,22 @@ CONTROL_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 # Only fields consumed by this CLI are required; new website fields pass through.
 PROFILE_SHAPE = {
-    "metadata": dict.fromkeys(("name", "alternate_name", "job_title", "headline_primary", "email", "site_url"), str),
+    "metadata": {
+        **dict.fromkeys(
+            (
+                "name",
+                "alternate_name",
+                "job_title",
+                "headline_primary",
+                "headline_secondary",
+                "work_location",
+                "email",
+                "site_url",
+            ),
+            str,
+        ),
+        "socials": [{"name": str, "url": str}],
+    },
     "biography": [str],
     "expertise": [{"title": str, "description": str}],
     "experience": [{"company": str, "title": str, "description": str, "tags": [str]}],
@@ -40,13 +56,26 @@ PROFILE_SHAPE = {
     "certifications": [{"title": str, "issuer": str, "active": bool, "url": str}],
     "specializations": [{"title": str, "issuer_details": str, "url": str}],
     "thesis": {"title": str, "institution_details": str, "description": str, "url": str},
-    "papers": [{"title": str, "venue": str, "url": str}],
+    "papers": [{"title": str, "venue": str, "url": str, "code": str, "code_label": str}],
     "open_source": [{"title": str, "description": str, "href": str}],
     "youtube_series": [{"title": str, "description": str, "url": str}],
     "site_pages": [{"title": str, "description": str, "audience": str, "url": str}],
     "articles": [{"title": str, "description": str, "slug": str, "date": str, "tags": [str], "reading_minutes": int}],
     "services": [{"title": str, "description": str, "badge": str, "cta_url": str}],
-    "tags": [{"name": str}],
+    "tags": [{"name": str, "description": str}],
+}
+# The same rule for the daily news archive at /api/news.
+NEWS_SHAPE = {
+    "url": str,
+    "editions": [
+        {
+            "slug": str,
+            "date": str,
+            "title": str,
+            "url": str,
+            "items": [{"title": str, "url": str, "domain": str, "description": str}],
+        }
+    ],
 }
 
 
@@ -151,6 +180,10 @@ def _fetch(url: str, accept: str, deadline: float) -> bytes:
     return bytes(payload)
 
 
+# Each JSON endpoint by the name used in its error messages and the document it serves.
+_DOCUMENTS = {"profile": "portfolio document", "news": "news archive"}
+
+
 def _validate(value: object, shape: object, path: str) -> None:
     """Check the few nested JSON shapes needed for rendering, without a dependency."""
     if isinstance(shape, dict) and isinstance(value, dict):
@@ -164,7 +197,9 @@ def _validate(value: object, shape: object, path: str) -> None:
             raise FmindError(f"the website returned terminal control characters at {path}")
         return
     else:
-        raise FmindError(f"the profile endpoint returned an invalid portfolio document at {path}")
+        # The path starts with the endpoint name, such as `profile.metadata`.
+        name = path.split(".", 1)[0].split("[", 1)[0]
+        raise FmindError(f"the {name} endpoint returned an invalid {_DOCUMENTS[name]} at {path}")
 
 
 def _reject_constant(name: str) -> None:
@@ -172,12 +207,13 @@ def _reject_constant(name: str) -> None:
     raise ValueError(name)
 
 
-def _parse_profile(payload: bytes) -> dict[str, Any]:
-    """Decode the portfolio document, rejecting anything that is not one."""
+def _parse_json(payload: bytes, shape: object, name: str) -> dict[str, Any]:
+    """Decode one of the website's JSON documents, rejecting anything that is not one."""
+    noun = _DOCUMENTS[name]
     try:
         document = json.loads(payload, parse_constant=_reject_constant)
     except (ValueError, RecursionError) as error:
-        raise FmindError("the profile endpoint did not return JSON") from error
+        raise FmindError(f"the {name} endpoint did not return JSON") from error
     # Check keys and future fields too: JSON output forwards them even when the
     # renderer does not consume them. The decoder accepts surrogates and can turn
     # finite JSON literals such as 1e999 into infinity.
@@ -185,19 +221,25 @@ def _parse_profile(payload: bytes) -> dict[str, Any]:
     while pending:
         value, depth = pending.pop()
         if depth > MAX_DEPTH:
-            raise FmindError(f"the profile endpoint returned a portfolio document nested over {MAX_DEPTH} levels")
+            raise FmindError(f"the {name} endpoint returned a {noun} nested over {MAX_DEPTH} levels")
         if isinstance(value, float) and not math.isfinite(value):
-            raise FmindError("the profile endpoint returned a non-finite number")
+            raise FmindError(f"the {name} endpoint returned a non-finite number")
         if isinstance(value, str):
             try:
                 value.encode("utf-8")
             except UnicodeEncodeError as error:
-                raise FmindError("the profile endpoint returned invalid Unicode") from error
+                raise FmindError(f"the {name} endpoint returned invalid Unicode") from error
         elif isinstance(value, dict):
             pending.extend((item, depth + 1) for item in (*value, *value.values()))
         elif isinstance(value, list):
             pending.extend((item, depth + 1) for item in value)
-    _validate(document, PROFILE_SHAPE, "profile")
+    _validate(document, shape, name)
+    return document
+
+
+def _parse_profile(payload: bytes) -> dict[str, Any]:
+    """Decode the portfolio document behind every section command."""
+    document = _parse_json(payload, PROFILE_SHAPE, "profile")
     links = document["thesis"].get("links")
     if links is not None:
         _validate(links, [{"label": str, "url": str}], "profile.thesis.links")
@@ -220,6 +262,11 @@ def _parse_markdown(payload: bytes) -> str:
 def load_profile(*, url: str | None = None) -> dict[str, Any]:
     """Return the portfolio document behind every section command."""
     return _parse_profile(_download(url if url is not None else _profile_url()))
+
+
+def load_news() -> dict[str, Any]:
+    """Return the daily news archive, on the same origin as the profile."""
+    return _parse_json(_download(origin_url(NEWS_PATH)), NEWS_SHAPE, "news")
 
 
 def load_article(slug: str, *, profile_url: str | None = None) -> str:

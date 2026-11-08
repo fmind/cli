@@ -1,6 +1,6 @@
 # fmind
 
-Read [Médéric Hurier's (Fmind)](https://www.fmind.dev/) portfolio from the terminal.
+Read [Médéric Hurier's (Fmind)](https://www.fmind.dev/) portfolio and daily tech news from the terminal.
 
 ```bash
 uvx fmind whoami
@@ -8,26 +8,28 @@ uvx fmind whoami
 
 ## Commands
 
-| Command                                        | Shows                                             |
-| ---------------------------------------------- | ------------------------------------------------- |
-| `fmind`                                        | The `whoami` card and a pointer to `--help`       |
-| `fmind whoami`                                 | Name, featured experience, availability, contact  |
-| `fmind about`                                  | The biography                                     |
-| `fmind skills`                                 | Core expertise, as published on the site          |
-| `fmind experiences`                            | Engagements in website order                      |
-| `fmind community`                              | Ambassador and advisory roles                     |
-| `fmind certifications`                         | Certifications, the PhD, specializations          |
-| `fmind papers`                                 | The doctorate and the peer-reviewed publications  |
-| `fmind projects [--limit 6]`                   | Open-source repositories and video series         |
-| `fmind sites`                                  | Interactive tools published alongside the writing |
-| `fmind articles [--limit 6]`                   | The most recent writing                           |
-| `fmind search [query...] [--tag] [--limit 10]` | Articles matching every term, newest first        |
-| `fmind read <slug> [--raw]`                    | One article, rendered in the terminal             |
-| `fmind hire`                                   | What can be booked right now                      |
+| Command                                        | Shows                                                     |
+| ---------------------------------------------- | --------------------------------------------------------- |
+| `fmind`                                        | The `whoami` card and a pointer to `--help`               |
+| `fmind whoami`                                 | Name, headline, location, experience, availability, links |
+| `fmind about`                                  | The biography                                             |
+| `fmind skills`                                 | Core expertise, as published on the site                  |
+| `fmind experiences`                            | Engagements in website order                              |
+| `fmind certifications`                         | Certifications, the PhD, specializations                  |
+| `fmind community`                              | Ambassador and advisory roles                             |
+| `fmind papers`                                 | The doctorate and the peer-reviewed papers, with code     |
+| `fmind projects [--limit 6]`                   | Open-source repositories and video series                 |
+| `fmind sites`                                  | Interactive tools published alongside the writing         |
+| `fmind articles [--limit 6]`                   | The most recent writing                                   |
+| `fmind search [query...] [--tag] [--limit 10]` | Articles matching every term, newest first                |
+| `fmind read <slug> [--raw]`                    | One article, rendered in the terminal                     |
+| `fmind tags`                                   | The article tags, with counts and their `search --tag`    |
+| `fmind news [query...] [--limit]`              | Daily curated links, newest edition first                 |
+| `fmind hire`                                   | What can be booked right now                              |
 
-The commands group sections of the website's profile API. Their names stay stable when the website's navigation or visual design changes.
+The commands group sections of the website's profile and news APIs. Their names stay stable when the website's navigation or visual design changes.
 
-`--limit` bounds articles and search results, and each project list (repositories and video series); `--json` prints a command's data instead of prose; `--raw` prints an article's Markdown source. Search also accepts `--tag`. Use `--json` and `jq` for other filtering.
+`--limit` bounds articles, search results, news editions, and each project list (repositories and video series); `--json` prints a command's data instead of prose; `--raw` prints an article's Markdown source. Search also accepts `--tag`. Use `--json` and `jq` for other filtering.
 
 `--json` works before or after the command: both `fmind --json experiences` and `fmind experiences --json` print the raw website section. Global `--color` / `--no-color` and `--version` go before the command. Colour is detected automatically, including `NO_COLOR` and redirected output. Use `fmind --help` or `fmind <command> --help` for options.
 
@@ -50,6 +52,17 @@ fmind read "$slug"
 fmind read "$slug" --raw | glow -
 ```
 
+### News
+
+`fmind news` prints the latest daily edition of curated links on AI agents, Python, security, and cloud engineering. Search terms keep only the links that contain all of them, matched against titles, domains, summaries, and URLs; an edition date such as `2026-11-06` or `2026-11` selects every link of those editions. `--limit` counts editions: 1 by default, 10 when searching.
+
+```bash
+fmind news                  # the latest edition
+fmind news --limit 7        # the past week
+fmind news agent security   # matching links, newest edition first
+fmind news 2026-11-06       # one edition
+```
+
 ### Piping
 
 `--json` turns every command into a data source, so the portfolio composes with the rest of the shell. JSON goes to stdout without colour or prose; errors go to stderr. With `read --raw --json`, JSON takes precedence and includes the Markdown in its `markdown` field.
@@ -58,9 +71,10 @@ fmind read "$slug" --raw | glow -
 fmind articles --limit 20 --json | jq -r '.[] | "\(.date[:10])  \(.title)"'
 fmind search agent --json | jq -r '.[].url'
 fmind certifications --json | jq -r '.certifications[] | select(.active) | .title'
+fmind news --limit 7 --json | jq -r '.[].items[] | "\(.domain)  \(.title)"'
 ```
 
-`whoami --json` includes `metadata`, `experience` (a list containing the featured engagement, or an empty list), and `services`. `certifications --json` includes `certifications`, `thesis`, and `specializations`. `projects --json` includes `open_source` and `youtube_series`, each keeping the website's fields and bounded by `--limit`.
+`whoami --json` includes `metadata`, `experience` (a list containing the featured engagement, or an empty list), and `services`. `certifications --json` includes `certifications`, `thesis`, and `specializations`. `projects --json` includes `open_source` and `youtube_series`, each keeping the website's fields and bounded by `--limit`. `news --json` is a list of editions with the website's fields; a search keeps only the matching `items`.
 
 **Migration to 2.0.0:** `projects --json` now returns an object instead of one mixed array; change filters from `.[]` to `.open_source[]` or `.youtube_series[]`. `--limit` now bounds each list, so video series are no longer crowded out by repositories.
 
@@ -80,7 +94,7 @@ Point it at another origin with `FMIND_PROFILE_URL` — useful against a local `
 FMIND_PROFILE_URL=http://127.0.0.1:8080/api/profile fmind whoami
 ```
 
-Article reads and the MCP bridge follow the same origin, so one variable moves the whole CLI.
+News and article reads and the MCP bridge follow the same origin, so one variable moves the whole CLI.
 
 ## MCP over stdio
 

@@ -6,6 +6,7 @@ import email.message
 import http.client
 import io
 import json
+import re
 import threading
 import urllib.error
 from pathlib import Path
@@ -349,3 +350,54 @@ def test_expired_worker_does_not_start_network_io() -> None:
     # The autouse network boundary fails if a delayed worker starts a request.
     with pytest.raises(api.FmindError, match="timed out"):
         api._fetch("https://example.test/article.md", "text/markdown", float("-inf"))
+
+
+def test_news_follows_the_profile_origin(monkeypatch: pytest.MonkeyPatch, news_archive: dict[str, Any]) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def download(url: str, accept: str = "application/json") -> bytes:
+        calls.append((url, accept))
+        return json.dumps(news_archive).encode()
+
+    monkeypatch.setattr(api, "_download", download)
+    assert api.load_news() == news_archive
+    monkeypatch.setenv("FMIND_PROFILE_URL", "http://127.0.0.1:8080/api/profile?preview=1")
+    api.load_news()
+    assert calls == [
+        ("https://www.fmind.dev/api/news", "application/json"),
+        ("http://127.0.0.1:8080/api/news", "application/json"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("change", "location"),
+    [
+        (lambda archive: archive.pop("editions"), "news.editions"),
+        (lambda archive: archive["editions"][1].pop("slug"), "news.editions[1].slug"),
+        (lambda archive: archive["editions"][0]["items"][1].update(url=None), "news.editions[0].items[1].url"),
+    ],
+)
+def test_news_rejects_malformed_archives(
+    monkeypatch: pytest.MonkeyPatch, news_archive: dict[str, Any], change: Any, location: str
+) -> None:
+    change(news_archive)
+    monkeypatch.setattr(api, "_download", lambda url, accept="": json.dumps(news_archive).encode())
+    with pytest.raises(api.FmindError) as caught:
+        api.load_news()
+    assert str(caught.value) == f"the news endpoint returned an invalid news archive at {location}"
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (b"<html>nope</html>", "the news endpoint did not return JSON"),
+        (b"[]", "the news endpoint returned an invalid news archive at news"),
+        (b'{"url": "u", "editions": [], "x": 1e999}', "the news endpoint returned a non-finite number"),
+        (b'{"url": "\\ud800", "editions": []}', "the news endpoint returned invalid Unicode"),
+        (b'{"url": "\\u009b2J", "editions": []}', "terminal control characters at news.url"),
+    ],
+)
+def test_news_applies_the_profile_safety_checks(monkeypatch: pytest.MonkeyPatch, payload: bytes, message: str) -> None:
+    monkeypatch.setattr(api, "_download", lambda url, accept="": payload)
+    with pytest.raises(api.FmindError, match=re.escape(message)):
+        api.load_news()
