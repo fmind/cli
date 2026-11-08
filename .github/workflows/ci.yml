@@ -24,9 +24,9 @@ jobs:
           fetch-depth: 100 # check:leaks scans the last 100 commits; a shallower clone hides them
           persist-credentials: false # no step pushes back to the repository
       - name: Install mise system
-        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          version: 2026.10.21 # pinned mise; bump deliberately with mise.lock tooling
+          version: 2026.11.4 # pinned mise; bump deliberately with mise.lock tooling
           cache: true
       - name: Run canonical gate
         run: mise run all
@@ -43,16 +43,16 @@ jobs:
       fail-fast: false
       matrix:
         # The gate covers the pinned interpreter; a pin bump must move the old pin here.
-        python: ["3.11", "3.12", "3.13", "3.15"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install mise system
-        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          version: 2026.10.21 # pinned mise; bump deliberately with mise.lock tooling
+          version: 2026.11.4 # pinned mise; bump deliberately with mise.lock tooling
           cache: true
       # The gate runs on the pinned interpreter; this proves the `requires-python` range
       # the published wheel advertises, from its floor to the newest release.
@@ -70,9 +70,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install mise system
-        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          version: 2026.10.21 # pinned mise; bump deliberately with mise.lock tooling
+          version: 2026.11.4 # pinned mise; bump deliberately with mise.lock tooling
           cache: true
       # The published wheel promises these floors; the lockfile only proves the latest
       # versions. Re-resolving rewrites uv.lock on this throwaway runner only.
