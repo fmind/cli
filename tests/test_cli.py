@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 from importlib.metadata import distribution, version
@@ -261,7 +262,8 @@ def test_whoami_shows_location_secondary_headline_and_socials(document: dict[str
 def test_whoami_skips_an_empty_secondary_headline(document: dict[str, Any]) -> None:
     document["metadata"]["headline_secondary"] = ""
     output = runner.invoke(app, ["--no-color", "whoami"], terminal_width=120).output
-    assert "Headline     Example expertise\nLocation" in output
+    # Rich versions pad the label column differently; no blank line may follow the headline.
+    assert re.search(r"^Headline +Example expertise\nLocation ", output, re.MULTILINE)
 
 
 def test_tags_count_articles_and_show_the_search(document: dict[str, Any]) -> None:
