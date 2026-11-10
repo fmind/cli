@@ -40,8 +40,9 @@ run = "jactionlint"
 
 [tasks."check:format"]
 alias = "cf"
-description = "Check formatting and the lockfile"
-run = ["uv lock --check", "uv run --locked --extra mcp ruff format --check src tests", "dprint check"]
+description = "Check formatting"
+# Every `uv run --locked` fails on a stale uv.lock, so no separate lock check is needed.
+run = ["uv run --locked --extra mcp ruff format --check src tests", "dprint check"]
 
 [tasks."check:leaks"]
 alias = "cs"
@@ -73,7 +74,7 @@ run = "uv audit --locked --preview-features audit-command"
 
 [tasks.clean]
 description = "Remove build artifacts, caches, and coverage files"
-run = "rm -rf .coverage .pytest_cache/ .ruff_cache/ .ty_cache/ dist/ htmlcov/"
+run = "rm -rf .coverage .pytest_cache/ .ruff_cache/ dist/"
 
 [tasks.format]
 alias = "f"

@@ -21,10 +21,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install mise system
-        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - name: Set up pinned runtime tools
+        uses: ./.github/actions/setup-mise
         with:
-          version: 2026.11.4 # pinned mise; bump deliberately with mise.lock tooling
-          cache: false
+          tools: aqua:astral-sh/uv python
       - name: Verify live website compatibility
         run: mise run smoke

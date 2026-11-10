@@ -23,11 +23,8 @@ jobs:
         with:
           fetch-depth: 100 # check:leaks scans the last 100 commits; a shallower clone hides them
           persist-credentials: false # no step pushes back to the repository
-      - name: Install mise system
-        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
-        with:
-          version: 2026.11.4 # pinned mise; bump deliberately with mise.lock tooling
-          cache: true
+      - name: Set up mise tools
+        uses: ./.github/actions/setup-mise
       - name: Run canonical gate
         run: mise run all
       - name: Verify no changes
@@ -49,11 +46,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install mise system
-        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - name: Set up uv
+        uses: ./.github/actions/setup-mise
         with:
-          version: 2026.11.4 # pinned mise; bump deliberately with mise.lock tooling
-          cache: true
+          tools: aqua:astral-sh/uv
       # The gate runs on the pinned interpreter; this proves the `requires-python` range
       # the published wheel advertises, from its floor to the newest release.
       - name: Run the test suite
@@ -69,11 +65,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install mise system
-        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - name: Set up uv
+        uses: ./.github/actions/setup-mise
         with:
-          version: 2026.11.4 # pinned mise; bump deliberately with mise.lock tooling
-          cache: true
+          tools: aqua:astral-sh/uv
       # The published wheel promises these floors; the lockfile only proves the latest
       # versions. Re-resolving rewrites uv.lock on this throwaway runner only.
       - name: Run the test suite at the declared lower bounds

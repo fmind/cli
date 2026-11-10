@@ -10,7 +10,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: security
+  group: security-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   scan:
@@ -23,11 +23,13 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false # the scanner only reads the checkout
-      - name: Install mise system
-        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - name: Set up security scanners
+        uses: ./.github/actions/setup-mise
         with:
-          version: 2026.11.4 # pinned mise; bump deliberately with mise.lock tooling
+          tools: aqua:astral-sh/uv betterleaks
       - name: Scan complete Git history
         run: mise run check:leaks:full
       - name: Audit locked dependencies
+        # Each scan is independent: a failed secret scan must not skip the vulnerability audit.
+        if: ${{ !cancelled() }}
         run: mise run check:vuln
