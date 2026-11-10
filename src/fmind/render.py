@@ -240,7 +240,7 @@ def article_body(markdown: str) -> RenderableType:
     The source already opens with the title, summary, date, reading time, tags and
     canonical URL, so nothing is prepended here.
     """
-    return Markdown(markdown, code_theme="ansi_dark", hyperlinks=False)
+    return Markdown(markdown, code_theme="ansi_light", hyperlinks=False)
 
 
 def papers(doc: dict[str, Any]) -> RenderableType:

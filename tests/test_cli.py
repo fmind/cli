@@ -838,3 +838,14 @@ def test_read_pages_on_an_interactive_terminal(monkeypatch: pytest.MonkeyPatch) 
     assert len(shown) == 1
     assert "The body of the article." in shown[0]
     assert "The body of the article." not in result.stdout
+
+
+def test_article_body_uses_standard_ansi_slots_for_code() -> None:
+    from fmind import render
+
+    out = render.console(color=True)
+    with out.capture() as captured:
+        out.print(render.article_body("```python\ndef greet() -> str:\n    return 'hi'\n```\n"))
+    rendered = captured.get()
+    assert "\x1b[34mdef\x1b[0m" in rendered
+    assert "\x1b[94m" not in rendered
