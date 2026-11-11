@@ -1,7 +1,6 @@
 """Render sections of the portfolio document as terminal output."""
 
-from __future__ import annotations
-
+import errno
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -17,9 +16,17 @@ from rich.text import Text
 ACCENT = "bold blue"
 
 
+class _Console(Console):
+    """Route broken-pipe flushes to Click instead of Rich's fd-1 dup2 handler."""
+
+    def on_broken_pipe(self) -> None:
+        self.quiet = True
+        raise BrokenPipeError(errno.EPIPE, "Broken pipe")
+
+
 def console(*, color: bool | None = None) -> Console:
     """Detect terminal colour and NO_COLOR unless explicitly overridden."""
-    return Console(
+    return _Console(
         force_terminal=True if color is True else None,
         color_system="truecolor" if color is True else "auto",
         no_color=None if color is None else not color,
@@ -106,7 +113,7 @@ def whoami(doc: dict[str, Any]) -> RenderableType:
         # Table cells crop even no-wrap links. Keep these outside the grid,
         # with the same 11-character label and two-space gap.
         *(
-            Text.assemble((f"{label:<13}", ACCENT), _link(value), no_wrap=True, overflow="ignore")
+            Text.assemble((f"{label:<11}  ", ACCENT), _link(value), no_wrap=True, overflow="ignore")
             for label, value in (
                 ("Contact", meta["email"]),
                 ("Website", meta["site_url"]),
@@ -179,10 +186,19 @@ def certifications(doc: dict[str, Any]) -> RenderableType:
 def projects(doc: dict[str, Any], *, limit: int = 6) -> RenderableType:
     """Open-source repositories, then video series; `limit` bounds each list."""
     count = max(limit, 0)
-    blocks: list[RenderableType] = [
-        _entry(Text(project["title"], style="bold"), Text(project["description"]), _link(project["href"]))
-        for project in doc["open_source"][:count]
-    ]
+    blocks: list[RenderableType] = []
+    for project in doc["open_source"][:count]:
+        lines: list[RenderableType] = [
+            Text(project["title"], style="bold"),
+            Text(project["description"]),
+            _link(project["href"]),
+        ]
+        repo = project.get("repo")
+        if repo and repo != project["href"]:
+            code = Text("  Code  ", no_wrap=True, overflow="ignore")
+            code.append_text(_link(repo))
+            lines.append(code)
+        blocks.append(_entry(*lines))
     series = doc["youtube_series"][:count]
     if series:
         blocks += [Text("VIDEO SERIES", style=ACCENT), Text()]
@@ -246,21 +262,17 @@ def article_body(markdown: str) -> RenderableType:
 def papers(doc: dict[str, Any]) -> RenderableType:
     """The doctorate and the peer-reviewed record behind it."""
     thesis = doc["thesis"]
-    parts: list[RenderableType] = [
-        _entry(
-            Text(thesis["title"], style="bold"),
-            Text(thesis["institution_details"]),
-            Text(thesis["description"]),
-            _link(thesis["url"]),
-        )
+    thesis_lines: list[RenderableType] = [
+        Text(thesis["title"], style="bold"),
+        Text(thesis["institution_details"]),
+        Text(thesis["description"]),
+        _link(thesis["url"]),
     ]
     for link in thesis.get("links") or []:
         row = Text(f"  {link['label']}  ", no_wrap=True, overflow="ignore")
         row.append_text(_link(link["url"]))
-        parts.append(row)
-    if thesis.get("links"):
-        parts.append(Text())
-    parts += [Text("PUBLICATIONS", style=ACCENT), Text()]
+        thesis_lines.append(row)
+    parts: list[RenderableType] = [_entry(*thesis_lines), Text("PUBLICATIONS", style=ACCENT), Text()]
     for paper in doc["papers"]:
         lines: list[RenderableType] = [Text(paper["title"], style="bold"), Text(paper["venue"]), _link(paper["url"])]
         if paper["code"]:

@@ -1,15 +1,15 @@
 """Command surface: every section renders, JSON passthrough, and error handling."""
 
-from __future__ import annotations
-
 import json
 import re
 import shlex
 import subprocess
 from importlib.metadata import distribution, version
+from pathlib import Path
 from typing import Any
 
 import pytest
+from markdown_it import MarkdownIt
 from rich.text import Text
 from typer.testing import CliRunner
 
@@ -22,6 +22,36 @@ runner = CliRunner()
 def test_installed_metadata_declares_the_license() -> None:
     package = distribution("fmind")
     assert package.metadata.get_all("License-File") == ["LICENSE"]
+
+
+def test_readme_links_and_assets_resolve_for_pypi() -> None:
+    root = Path(__file__).parent.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    tokens = MarkdownIt().parse(readme)
+    links = [
+        str(child.attrGet("src" if child.type == "image" else "href"))
+        for token in tokens
+        if token.type == "inline"
+        for child in token.children or []
+        if child.type in {"link_open", "image"}
+    ]
+    links += [
+        link
+        for token in tokens
+        if token.type == "html_block"
+        for link in re.findall(r'\b(?:href|src)="([^"]+)"', token.content)
+    ]
+    assert links
+    for link in links:
+        assert link.startswith("https://"), f"PyPI cannot resolve relative README link {link}"
+        bare = link.partition("?")[0].partition("#")[0]
+        if match := re.fullmatch(
+            r"https://(?:raw\.githubusercontent\.com/fmind/cli/main|github\.com/fmind/cli/blob/main)/(.+)",
+            bare,
+        ):
+            assert (root / match[1]).is_file(), link
+        elif match := re.fullmatch(r"https://github\.com/fmind/cli/actions/workflows/([^/]+)(?:/badge\.svg)?", bare):
+            assert (root / ".github/workflows" / match[1]).is_file(), link
 
 
 SECTIONS = [
@@ -112,11 +142,14 @@ def test_certifications_spell_their_state_the_way_the_website_does() -> None:
     assert runner.invoke(app, ["certifications", "--verify"]).exit_code == 2
 
 
-def test_articles_are_newest_first_and_respect_the_limit() -> None:
+def test_articles_are_newest_first_and_respect_the_limit(document: dict[str, Any]) -> None:
+    document["metadata"]["site_url"] = "https://example.test/"
     result = runner.invoke(app, ["--no-color", "articles", "--limit", "1"])
     assert "Newer" in result.output
     assert "Older" not in result.output
     assert "fmind read newer" in result.output, "a listing must show how to open an entry"
+    assert "https://example.test/articles/" in result.output
+    assert "//articles/" not in result.output
 
 
 def test_search_narrows_the_listing() -> None:
@@ -241,22 +274,29 @@ def test_papers_shows_the_thesis_and_publications() -> None:
 
 
 def test_papers_without_code_show_no_code_row(document: dict[str, Any]) -> None:
+    document["thesis"].pop("links", None)
     document["papers"][0].update(code="", code_label="")
     output = runner.invoke(app, ["--no-color", "papers"]).output
+    assert "d\nu\n\nPUBLICATIONS\n" in output
     assert "Example Conference\nhttps://orbilu.example/example-paper\n\n" in output
 
 
 def test_papers_label_unnamed_code(document: dict[str, Any]) -> None:
     document["papers"][0]["code_label"] = ""
     output = runner.invoke(app, ["--no-color", "papers"]).output
+    assert "d\nu\n  Code  https://example.test/thesis-code\n\nPUBLICATIONS\n" in output
     assert "  Code  https://example.test/paper-code\n" in output
 
 
 def test_whoami_shows_location_secondary_headline_and_socials(document: dict[str, Any]) -> None:
+    document["metadata"]["socials"].append(
+        {"name": "Google Scholar", "url": "https://scholar.example.test/alex", "icon": "scholar"}
+    )
     output = runner.invoke(app, ["--no-color", "whoami"], terminal_width=120).output
     assert "Example City" in output
     assert "Example credentials" in output
     assert "Code Host    https://code.example.test/alex\n" in output
+    assert "Google Scholar  https://scholar.example.test/alex\n" in output
 
 
 def test_whoami_skips_an_empty_secondary_headline(document: dict[str, Any]) -> None:
@@ -332,6 +372,26 @@ def test_projects_limit_bounds_each_list(document: dict[str, Any]) -> None:
     assert "series" in result.output, "video series are never crowded out by repositories"
 
 
+def test_projects_show_a_distinct_code_repository(document: dict[str, Any]) -> None:
+    document["open_source"] = [
+        {
+            "title": "Example Course",
+            "href": "https://course.example.test/",
+            "description": "Course site.",
+            "repo": "https://code.example.test/course",
+        },
+        {
+            "title": "Same URL",
+            "href": "https://code.example.test/same",
+            "description": "Repository only.",
+            "repo": "https://code.example.test/same",
+        },
+    ]
+    output = runner.invoke(app, ["--no-color", "projects"]).output
+    assert "https://course.example.test/\n  Code  https://code.example.test/course\n\n" in output
+    assert "  Code  https://code.example.test/same" not in output
+
+
 def test_projects_json_groups_each_published_list(document: dict[str, Any]) -> None:
     payload = json.loads(runner.invoke(app, ["projects", "--json"]).stdout)
     assert payload == {"open_source": document["open_source"], "youtube_series": document["youtube_series"]}
@@ -405,6 +465,17 @@ def test_version_exits_before_any_fetch() -> None:
     assert result.exit_code == 0
     assert result.stdout == f"fmind {version('fmind')}\n"
     assert not result.stderr
+
+
+def test_module_entrypoint_runs_the_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import runpy
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["fmind", "--version"])
+    with pytest.raises(SystemExit) as exit_info:
+        runpy.run_module("fmind", run_name="__main__")
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out == f"fmind {version('fmind')}\n"
 
 
 def test_no_arguments_shows_the_whoami_card_and_points_to_help() -> None:
@@ -655,7 +726,10 @@ class _ClosedPipe:
         return False
 
 
-@pytest.mark.parametrize("command", [["--json", "articles"], ["read", "newer", "--raw"]])
+@pytest.mark.parametrize(
+    "command",
+    [["--no-color", "articles"], ["--color", "articles"], ["--json", "articles"], ["read", "newer", "--raw"]],
+)
 def test_closed_reader_ends_quietly(monkeypatch: pytest.MonkeyPatch, command: list[str]) -> None:
     import sys
 

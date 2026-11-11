@@ -1,7 +1,5 @@
 """News selection: latest editions, term matching per link, and bounds."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from fmind import news
@@ -23,8 +21,14 @@ def test_without_terms_returns_the_latest_editions_whole(news_archive: dict[str,
 
 
 def test_editions_are_newest_first_whatever_the_published_order(news_archive: dict[str, Any]) -> None:
-    editions = list(reversed(news_archive["editions"]))
-    assert slugs(news.search(editions, "", limit=9)) == ["2024-08-16", "2024-08-15-summit", "2024-07-01"]
+    same_day = {**news_archive["editions"][1], "slug": "2024-08-15"}
+    editions = [same_day, *reversed(news_archive["editions"])]
+    assert slugs(news.search(editions, "", limit=9)) == [
+        "2024-08-16",
+        "2024-08-15-summit",
+        "2024-08-15",
+        "2024-07-01",
+    ]
 
 
 def test_terms_keep_only_matching_links(news_archive: dict[str, Any]) -> None:

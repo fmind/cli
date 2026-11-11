@@ -1,7 +1,5 @@
 """Live-only fetching, website input validation, and transport failures."""
 
-from __future__ import annotations
-
 import email.message
 import http.client
 import io
@@ -161,6 +159,13 @@ def test_optional_links_are_validated(document: dict[str, Any]) -> None:
     with pytest.raises(api.FmindError, match=r"thesis\.links"):
         api._parse_profile(json.dumps(document).encode())
     del document["thesis"]["links"]
+    document["open_source"][0]["repo"] = 42
+    with pytest.raises(api.FmindError, match=r"open_source\[0\]\.repo"):
+        api._parse_profile(json.dumps(document).encode())
+    document["open_source"][0]["repo"] = "https://code.example.test/\x1b[2J"
+    with pytest.raises(api.FmindError, match=r"terminal control characters at profile\.open_source\[0\]\.repo"):
+        api._parse_profile(json.dumps(document).encode())
+    document["open_source"][0]["repo"] = "https://code.example.test/repo"
     document["future_section"] = {"new": "content"}
     assert api._parse_profile(json.dumps(document).encode()) == document
 
@@ -222,18 +227,58 @@ def test_article_requires_utf8() -> None:
 
 
 def test_transport_revalidates_http_caches_and_bounds_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    def open_url(request: Any, timeout: float) -> _Response:
+    reads = 0
+
+    class TrackedResponse(_Response):
+        def read1(self, size: int | None = -1, /) -> bytes:
+            nonlocal reads
+            reads += 1
+            return super().read1(size)
+
+    def open_url(request: Any, *, timeout: float) -> TrackedResponse:
         assert request.get_header("Cache-control") == "no-cache"
         assert request.get_header("Accept") == "text/markdown"
         assert request.get_header("User-agent").startswith("fmind/")
         assert timeout == 15.0
-        return _Response(b"# Article", {"Content-Length": "9"})
+        return TrackedResponse(b"# Article", {"Content-Length": "9"})
 
-    monkeypatch.setattr("urllib.request.urlopen", open_url)
+    monkeypatch.setattr(api._OPENER, "open", open_url)
     assert api._download("https://example.test/article.md", "text/markdown") == b"# Article"
+    assert reads >= 1
+    reads = 0
     monkeypatch.setattr(api, "MAX_BYTES", 4)
     with pytest.raises(api.FmindError, match="more than 4 bytes"):
         api._download("https://example.test/article.md", "text/markdown")
+    assert reads == 0, "oversized Content-Length is rejected before reading the body"
+    monkeypatch.setattr(api._OPENER, "open", lambda *_args, **_kwargs: TrackedResponse(b"# Article"))
+    with pytest.raises(api.FmindError, match="more than 4 bytes"):
+        api._download("https://example.test/article.md", "text/markdown")
+
+
+def test_redirects_allow_https_and_reject_unsafe_targets() -> None:
+    import urllib.request
+
+    handler = api._RedirectHandler()
+    origin = urllib.request.Request("https://example.test/api/profile")
+    redirected = handler.redirect_request(origin, _Response(b""), 302, "Found", {}, "https://www.example.test/profile")
+    assert redirected is not None
+    assert redirected.full_url == "https://www.example.test/profile"
+
+    http_origin = urllib.request.Request("http://127.0.0.1:8080/api/profile")
+    upgraded = handler.redirect_request(http_origin, _Response(b""), 302, "Found", {}, "http://127.0.0.1:8080/v2")
+    assert upgraded is not None
+
+    with pytest.raises(api.FmindError, match="HTTPS to plain HTTP"):
+        handler.redirect_request(origin, _Response(b""), 302, "Found", {}, "http://www.example.test/profile")
+
+    for unsafe in (
+        "ftp://example.test/profile",
+        "file:///etc/passwd",
+        "https://user:secret@example.test/profile",  # betterleaks:allow (synthetic credential)
+    ):
+        with pytest.raises(api.FmindError, match="unsafe URL") as caught:
+            handler.redirect_request(origin, _Response(b""), 302, "Found", {}, unsafe)
+        assert "secret" not in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -250,7 +295,7 @@ def test_transport_errors_are_safe_and_keep_the_cause(monkeypatch: pytest.Monkey
     def fail(*args: object, **kwargs: object) -> bytes:
         raise error
 
-    monkeypatch.setattr("urllib.request.urlopen", fail)
+    monkeypatch.setattr(api._OPENER, "open", fail)
     with pytest.raises(api.FmindError) as caught:
         api._download("https://example.test/api/profile")
     assert caught.value.__cause__ is error
@@ -259,10 +304,10 @@ def test_transport_errors_are_safe_and_keep_the_cause(monkeypatch: pytest.Monkey
         assert "HTTP 503" in str(caught.value)
 
 
-@pytest.mark.parametrize("length", ["20", "invalid"])
+@pytest.mark.parametrize("length", ["20", "invalid", "-1"])
 def test_transport_rejects_incomplete_documents(monkeypatch: pytest.MonkeyPatch, length: str) -> None:
     response = _Response(b"# Partial", {"Content-Length": length})
-    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: response)
+    monkeypatch.setattr(api._OPENER, "open", lambda *args, **kwargs: response)
     with pytest.raises(api.FmindError, match="could not read the website"):
         api.load_article("example")
 
@@ -277,8 +322,9 @@ def test_rejects_terminal_controls(document: dict[str, Any], control: str) -> No
 
 
 @pytest.mark.parametrize("location", ["name", "extra-value", "extra-key", "nested"])
-@pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
-def test_rejects_invalid_unicode_everywhere(document: dict[str, Any], location: str, surrogate: str) -> None:
+@pytest.mark.parametrize("codepoint", [0xD800, 0xDFFF], ids=["high-surrogate", "low-surrogate"])
+def test_rejects_invalid_unicode_everywhere(document: dict[str, Any], location: str, codepoint: int) -> None:
+    surrogate = chr(codepoint)
     if location == "name":
         document["metadata"]["name"] = surrogate
     elif location == "extra-value":
@@ -317,7 +363,7 @@ def test_total_deadline_bounds_blocking_io(monkeypatch: pytest.MonkeyPatch, bloc
             release.wait(5)
         return Response(b"# Article")
 
-    monkeypatch.setattr("urllib.request.urlopen", open_url)
+    monkeypatch.setattr(api._OPENER, "open", open_url)
     monkeypatch.setattr(api, "TIMEOUT_SECONDS", 0.05)
     try:
         with pytest.raises(api.FmindError, match="timed out"):
@@ -338,7 +384,7 @@ def test_worker_stops_a_progressing_body_at_deadline(monkeypatch: pytest.MonkeyP
             return super().read1(1)
 
     response = Response(b"a slowly progressing response")
-    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: response)
+    monkeypatch.setattr(api._OPENER, "open", lambda *args, **kwargs: response)
     monkeypatch.setattr(api.time, "monotonic", lambda: now)
     with pytest.raises(api.FmindError, match="timed out") as caught:
         api._fetch("https://example.test/article.md", "text/markdown", 1.0)

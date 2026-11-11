@@ -1,7 +1,5 @@
 """Bridge the website's read-only MCP surface from Streamable HTTP to stdio."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import AsyncIterator

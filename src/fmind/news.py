@@ -1,10 +1,8 @@
 """Select daily news editions from the news archive: newest, or matching."""
 
-from __future__ import annotations
-
 from typing import Any
 
-Edition = dict[str, Any]
+type Edition = dict[str, Any]
 
 
 def _edition_text(edition: Edition) -> str:
@@ -28,9 +26,16 @@ def search(editions: list[Edition], query: str, *, limit: int) -> list[Edition]:
     found: list[Edition] = []
     if limit <= 0:
         return found
-    for edition in sorted(editions, key=lambda e: e["date"], reverse=True):
-        header = _edition_text(edition)
-        items = [item for item in edition["items"] if all(t in f"{header} {_item_text(item)}" for t in terms)]
+    for edition in sorted(editions, key=lambda e: (e["date"], e["slug"]), reverse=True):
+        if terms:
+            header = _edition_text(edition)
+            items = [
+                item
+                for item in edition["items"]
+                if (haystack := f"{header} {_item_text(item)}") and all(t in haystack for t in terms)
+            ]
+        else:
+            items = edition["items"]
         if items:
             found.append(edition if len(items) == len(edition["items"]) else {**edition, "items": items})
         if len(found) >= limit:

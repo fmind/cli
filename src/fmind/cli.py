@@ -1,7 +1,5 @@
 """Command surface, mirroring the sections of www.fmind.dev."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import json
@@ -101,7 +99,7 @@ class _SystemPager(Pager):
         # Ctrl-C drops the unwritten rest, and a pager that quits early closes the pipe.
         with (
             contextlib.suppress(OSError),
-            cast("IO[bytes]", process.stdin) as pipe,
+            cast(IO[bytes], process.stdin) as pipe,
             contextlib.suppress(KeyboardInterrupt),
         ):
             pipe.write(content.encode())
@@ -263,7 +261,7 @@ def list_articles(ctx: typer.Context, limit: LimitOption = 6, as_json: JsonOptio
     """The most recent writing."""
     doc = _doc()
     posts = articles.latest(doc["articles"], limit=limit)
-    footer = f"{len(doc['articles'])} published · {doc['metadata']['site_url']}/articles/"
+    footer = f"{len(doc['articles'])} published · {doc['metadata']['site_url'].rstrip('/')}/articles/"
     _emit(ctx, render.articles(posts, footer=footer), posts, as_json=as_json)
 
 
@@ -332,7 +330,7 @@ def list_news(
     ctx: typer.Context,
     query: Annotated[
         list[str] | None,
-        typer.Argument(help="Terms to match against link titles, domains, summaries, URLs, and edition dates."),
+        typer.Argument(help="Terms to match against link titles, domains, summaries, URLs, and edition dates/topics."),
     ] = None,
     limit: Annotated[
         int | None,
@@ -344,7 +342,8 @@ def list_news(
     archive = _news()
     terms = " ".join(query or [])
     # Today's edition is the common read; a search looks further back by default.
-    found = news.search(archive["editions"], terms, limit=limit or (10 if terms.strip() else 1))
+    count = limit if limit is not None else (10 if terms.strip() else 1)
+    found = news.search(archive["editions"], terms, limit=count)
     footer = f"{len(found)} shown · {len(archive['editions'])} editions · {archive['url']}"
     _emit(ctx, render.news(found, footer=footer), found, as_json=as_json)
 

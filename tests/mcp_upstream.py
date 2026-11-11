@@ -1,7 +1,5 @@
 """Synthetic HTTP upstream for offline stdio subprocess tests."""
 
-from __future__ import annotations
-
 from unittest.mock import patch
 
 import httpx2

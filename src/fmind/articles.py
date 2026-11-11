@@ -1,21 +1,27 @@
 """Select articles from the profile document: newest, matching, or named."""
 
-from __future__ import annotations
-
 from typing import Any
 
-Article = dict[str, Any]
+type Article = dict[str, Any]
 
 
 def latest(articles: list[Article], *, limit: int) -> list[Article]:
     """Return the most recently published articles, newest first."""
-    return sorted(articles, key=lambda a: a["date"], reverse=True)[: max(limit, 0)]
+    by_slug = sorted(articles, key=lambda a: a["slug"])
+    return sorted(by_slug, key=lambda a: a["date"], reverse=True)[: max(limit, 0)]
 
 
 def _haystack(article: Article) -> str:
     """Return the searchable text of one article, lower-cased."""
     fields = [article["title"], article["description"], article["slug"], *article["tags"]]
     return " ".join(fields).lower()
+
+
+def _matches(article: Article, terms: list[str]) -> bool:
+    if not terms:
+        return True
+    haystack = _haystack(article)
+    return all(term in haystack for term in terms)
 
 
 def search(articles: list[Article], query: str, *, tag: str | None = None, limit: int = 10) -> list[Article]:
@@ -29,8 +35,7 @@ def search(articles: list[Article], query: str, *, tag: str | None = None, limit
     found = [
         article
         for article in articles
-        if all(term in _haystack(article) for term in terms)
-        and (wanted is None or wanted in {t.lower() for t in article["tags"]})
+        if (wanted is None or wanted in {t.lower() for t in article["tags"]}) and _matches(article, terms)
     ]
     return latest(found, limit=limit)
 

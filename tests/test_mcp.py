@@ -1,7 +1,5 @@
 """Remote forwarding, failure, and subprocess stdio protocol contracts."""
 
-from __future__ import annotations
-
 import asyncio
 import gzip
 import json
@@ -54,6 +52,16 @@ def test_forwarding() -> None:
             assert (await client.call_tool("echo", {})).is_error
             with pytest.raises(MCPError):
                 await client.read_resource("example://missing")
+
+        from mcp.server.lowlevel import Server
+
+        async with (
+            Client(Server("Empty"), cache=None) as empty_remote,
+            Client(mcp.create_bridge(empty_remote), cache=None) as empty_client,
+        ):
+            assert empty_client.server_capabilities.tools is None
+            assert empty_client.server_capabilities.resources is None
+            assert empty_client.server_capabilities.prompts is None
 
     asyncio.run(run())
 
@@ -152,6 +160,15 @@ def test_http_transport_bound(monkeypatch: pytest.MonkeyPatch, encoding: str) ->
             else:
                 assert (await client.get("https://example.test/mcp")).status_code == 502
         assert response.is_closed
+
+        class SyncOnly(httpx2.SyncByteStream):
+            pass
+
+        invalid = httpx2.Response(200, stream=SyncOnly())
+        monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=invalid))
+        async with httpx2.AsyncClient(transport=mcp._BoundedTransport()) as client:
+            with pytest.raises(mcp.FmindError, match="invalid stream"):
+                await client.get("https://example.test/mcp")
 
     asyncio.run(run())
 

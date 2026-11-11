@@ -1,7 +1,5 @@
 """Fetch and validate the live documents published by www.fmind.dev."""
 
-from __future__ import annotations
-
 import http.client
 import json
 import math
@@ -144,6 +142,31 @@ def _download(url: str, accept: str = "application/json") -> bytes:
     return outcome
 
 
+class _RedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Allow only safe HTTP(S) redirects without credentials or HTTPS downgrades."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        source = _http_url(req.full_url)
+        try:
+            target = _http_url(newurl)
+        except FmindError as error:
+            raise FmindError("the website redirected to an unsafe URL") from error
+        if source.scheme == "https" and target.scheme != "https":
+            raise FmindError("the website redirected from HTTPS to plain HTTP")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_RedirectHandler())
+
+
 def _fetch(url: str, accept: str, deadline: float) -> bytes:
     """Perform bounded I/O; never print or mutate caller state from the worker."""
     # Ask intermediary HTTP caches to revalidate too; no local copy is kept.
@@ -152,20 +175,24 @@ def _fetch(url: str, accept: str, deadline: float) -> bytes:
         if time.monotonic() >= deadline:
             raise TimeoutError("website request deadline exceeded")
         request = urllib.request.Request(url, headers=headers)  # noqa: S310
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310
-            payload = bytearray()
-            while len(payload) <= MAX_BYTES:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("website request deadline exceeded")
-                # read() can wait indefinitely for a slowly progressing body.
-                # read1() returns after at most one underlying read.
-                chunk = response.read1(min(64 * 1024, MAX_BYTES + 1 - len(payload)))
-                if not chunk:
-                    break
-                payload.extend(chunk)
+        with _OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:
             length = response.headers.get("Content-Length")
-            if len(payload) <= MAX_BYTES and length is not None and len(payload) != int(length):
-                raise http.client.IncompleteRead(bytes(payload))
+            expected = int(length) if length is not None else None
+            if expected is not None and expected < 0:
+                raise ValueError("negative Content-Length")
+            payload = bytearray()
+            if expected is None or expected <= MAX_BYTES:
+                while len(payload) <= MAX_BYTES:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("website request deadline exceeded")
+                    # read() can wait indefinitely for a slowly progressing body.
+                    # read1() returns after at most one underlying read.
+                    chunk = response.read1(min(64 * 1024, MAX_BYTES + 1 - len(payload)))
+                    if not chunk:
+                        break
+                    payload.extend(chunk)
+                if len(payload) <= MAX_BYTES and expected is not None and len(payload) != expected:
+                    raise http.client.IncompleteRead(bytes(payload))
     except urllib.error.HTTPError as error:
         msg = f"the website returned HTTP {error.code}"
         raise FmindError(msg) from error
@@ -174,7 +201,7 @@ def _fetch(url: str, accept: str, deadline: float) -> bytes:
     except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as error:
         msg = "could not read the website; check your connection and FMIND_PROFILE_URL"
         raise FmindError(msg) from error
-    if len(payload) > MAX_BYTES:
+    if (expected is not None and expected > MAX_BYTES) or len(payload) > MAX_BYTES:
         msg = f"the website returned more than {MAX_BYTES} bytes"
         raise FmindError(msg)
     return bytes(payload)
@@ -243,6 +270,10 @@ def _parse_profile(payload: bytes) -> dict[str, Any]:
     links = document["thesis"].get("links")
     if links is not None:
         _validate(links, [{"label": str, "url": str}], "profile.thesis.links")
+    for index, project in enumerate(document["open_source"]):
+        repo = project.get("repo")
+        if repo is not None:
+            _validate(repo, str, f"profile.open_source[{index}].repo")
     return document
 
 

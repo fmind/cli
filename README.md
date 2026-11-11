@@ -1,9 +1,44 @@
 # fmind
 
-Read [Médéric Hurier's (Fmind)](https://www.fmind.dev/) portfolio and daily tech news from the terminal.
+Read [Médéric Hurier's (Fmind)](https://www.fmind.dev/) portfolio and daily tech news from the terminal, or bridge its `/mcp` server over stdio.
+
+[![CI](https://github.com/fmind/cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fmind/cli/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/fmind?color=174EA6)](https://pypi.org/project/fmind/) [![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2Ffmind%2Fcli%2Fmain%2Fpyproject.toml)](https://pypi.org/project/fmind/) [![License: MIT](https://img.shields.io/badge/license-MIT-174EA6)](https://github.com/fmind/cli/blob/main/LICENSE)
+
+<a href="https://raw.githubusercontent.com/fmind/cli/main/docs/assets/overview.svg">
+  <img
+    src="https://raw.githubusercontent.com/fmind/cli/main/docs/assets/overview.svg"
+    alt="fmind overview: live endpoints on www.fmind.dev (/api/profile, /api/news, /articles/<slug>.md, and /mcp) flow through the stateless fmind CLI (strict validation, 15s / 8 MiB bounds, zero local cache) to Rich terminal cards, --json / --raw shell pipelines, and MCP over stdio."
+    width="960"
+  >
+</a>
+
+## Install
+
+Run immediately with [uv](https://docs.astral.sh/uv/), or install persistently:
+
+```console
+$ uvx fmind
+Name         Médéric Hurier (Fmind)
+Role         Freelance AI Architect
+Headline     Freelance AI Architect • AI Agents, MLOps & Security
+…
+Contact      contact@fmind.dev
+Website      https://www.fmind.dev
+…
+
+fmind --help lists every command.
+```
 
 ```bash
-uvx fmind whoami
+uv tool install fmind         # portfolio and news commands
+uv tool install 'fmind[mcp]'  # include the stdio MCP bridge
+pipx install fmind            # alternative
+```
+
+Override `FMIND_PROFILE_URL` to point profile, news, article reads, and `/mcp` at another origin (such as local `mise run watch`):
+
+```bash
+FMIND_PROFILE_URL=http://127.0.0.1:8080/api/profile fmind whoami
 ```
 
 ## Commands
@@ -18,7 +53,7 @@ uvx fmind whoami
 | `fmind certifications`                         | Certifications, the PhD, specializations                  |
 | `fmind community`                              | Ambassador and advisory roles                             |
 | `fmind papers`                                 | The doctorate and the peer-reviewed papers, with code     |
-| `fmind projects [--limit 6]`                   | Open-source repositories and video series                 |
+| `fmind projects [--limit 6]`                   | Open-source projects and video series, with code          |
 | `fmind sites`                                  | Interactive tools published alongside the writing         |
 | `fmind articles [--limit 6]`                   | The most recent writing                                   |
 | `fmind search [query...] [--tag] [--limit 10]` | Articles matching every term, newest first                |
@@ -27,24 +62,23 @@ uvx fmind whoami
 | `fmind news [query...] [--limit]`              | Daily curated links, newest edition first                 |
 | `fmind hire`                                   | What can be booked right now                              |
 
-The commands group sections of the website's profile and news APIs. Their names stay stable when the website's navigation or visual design changes.
+Commands mirror the website's `/api/profile` and `/api/news` sections and stay stable across visual redesigns.
 
-`--limit` bounds articles, search results, news editions, and each project list (repositories and video series); `--json` prints a command's data instead of prose; `--raw` prints an article's Markdown source. Search also accepts `--tag`. Use `--json` and `jq` for other filtering.
-
-`--json` works before or after the command: both `fmind --json experiences` and `fmind experiences --json` print the raw website section. Global `--color` / `--no-color` and `--version` go before the command. Colour is detected automatically, including `NO_COLOR` and redirected output. Use `fmind --help` or `fmind <command> --help` for options.
-
-Output uses your terminal's default text colour and blue accent. Community roles and credentials use stacked entries with their published links, so they remain readable in narrow terminals. Links are never folded, so they stay copyable, and terminals that support OSC 8 hyperlinks make them clickable. Redirected output carries no trailing whitespace.
+- `--limit` (`1`–`200`) bounds `articles`, `search`, `news` editions, and each `projects` list (`open_source` and `youtube_series`).
+- `--json` works before or after any portfolio command (`fmind --json experiences` or `fmind experiences --json`) and takes precedence over `read --raw` (storing the source in `markdown`). Pipe to `jq` for custom filters.
+- Global `--color` / `--no-color` (auto-detected, respecting `NO_COLOR` and redirects) and `--version` go before the command.
+- Output uses terminal-default text and a blue accent, stacked entries for narrow widths, unwrapped OSC 8 links, and no trailing whitespace when redirected.
 
 ### Reading
 
-`fmind search` matches titles, summaries, tags and slugs; terms are ANDed, so each extra word narrows the result, with or without quotes. `--tag` restricts to one of the site's own tags, case-insensitively; an unknown tag fails and lists the published ones.
+`fmind search` ANDs terms case-insensitively across titles, summaries, tags, and slugs. `--tag` restricts to a published site tag (unknown tags fail and list valid ones).
 
 ```bash
 fmind search agent security
 fmind search --tag MLOps --limit 3
 ```
 
-`fmind read` takes a slug, or enough of one to be unambiguous, and prints the article. In an interactive terminal whose `TERM` your system's terminfo database knows (not `dumb`), it pages through `$PAGER` (default `less`, with `LESS=FRX` unless you set `LESS`), so short articles print directly; `PAGER=cat` disables paging. A missing or unparsable `PAGER` is skipped and the article prints directly; if the pager fails to launch or exits unsuccessfully, the command reports an error; retry with `PAGER=cat`. Use `--raw` for the Markdown source.
+`fmind read` accepts an exact or unambiguous partial slug. On interactive terminals with a known non-`dumb` `TERM`, it pages via `$PAGER` (`less` with `LESS=FRX` unless `LESS` is set); `PAGER=cat` or a missing/unparsable `PAGER` prints directly, and pager launch or exit failures report an error (`PAGER=cat` retries without paging). `--raw` prints the Markdown source.
 
 ```bash
 slug="$(fmind articles --limit 1 --json | jq -r '.[0].slug')"
@@ -54,58 +88,30 @@ fmind read "$slug" --raw | glow -
 
 ### News
 
-`fmind news` prints the latest daily edition of curated links on AI agents, Python, security, and cloud engineering. Search terms keep only the links that contain all of them, matched against titles, domains, summaries, and URLs; an edition date such as `2026-11-06` or `2026-11` selects every link of those editions. `--limit` counts editions: 1 by default, 10 when searching.
+`fmind news` shows the latest daily edition of curated AI agent, Python, security, and cloud links. Terms AND-match link titles, domains, summaries, URLs, and edition dates or topics (`2026-11-06`, `2026-11`); `--limit` defaults to `1` (`10` when searching).
 
 ```bash
-fmind news                  # the latest edition
-fmind news --limit 7        # the past week
+fmind news                  # latest edition
+fmind news --limit 7        # past week
 fmind news agent security   # matching links, newest edition first
 fmind news 2026-11-06       # one edition
 ```
 
 ### Piping
 
-`--json` turns every command into a data source, so the portfolio composes with the rest of the shell. JSON goes to stdout without colour or prose; errors go to stderr. With `read --raw --json`, JSON takes precedence and includes the Markdown in its `markdown` field.
+`--json` writes undecorated JSON to stdout and errors to stderr:
 
 ```bash
 fmind articles --limit 20 --json | jq -r '.[] | "\(.date[:10])  \(.title)"'
-fmind search agent --json | jq -r '.[].url'
 fmind certifications --json | jq -r '.certifications[] | select(.active) | .title'
 fmind news --limit 7 --json | jq -r '.[].items[] | "\(.domain)  \(.title)"'
 ```
 
-`whoami --json` includes `metadata`, `experience` (a list containing the featured engagement, or an empty list), and `services`. `certifications --json` includes `certifications`, `thesis`, and `specializations`. `projects --json` includes `open_source` and `youtube_series`, each keeping the website's fields and bounded by `--limit`. `news --json` is a list of editions with the website's fields; a search keeps only the matching `items`.
-
-**Migration to 2.0.0:** `projects --json` now returns an object instead of one mixed array; change filters from `.[]` to `.open_source[]` or `.youtube_series[]`. `--limit` now bounds each list, so video series are no longer crowded out by repositories.
-
-**Migration to 1.0.0:** `certifications --json` now returns an object instead of an array; change credential filters from `.[]` to `.certifications[]`. The `experience` field in `whoami --json` is additive. Update existing scripts before upgrading from 0.2.0.
-
-## Install
-
-```bash
-uvx fmind whoami       # zero install
-uv tool install fmind  # persistent
-pipx install fmind     # alternative
-```
-
-Point it at another origin with `FMIND_PROFILE_URL` — useful against a local `mise run watch` server of the website:
-
-```bash
-FMIND_PROFILE_URL=http://127.0.0.1:8080/api/profile fmind whoami
-```
-
-News and article reads and the MCP bridge follow the same origin, so one variable moves the whole CLI.
+`whoami --json` returns `metadata`, `experience` (the featured engagement, or `[]`), and `services`. `certifications --json` groups `certifications`, `thesis`, and `specializations`. `projects --json` groups `open_source` and `youtube_series` (each bounded by `--limit`). `news --json` lists editions, keeping only matching `items` when searching.
 
 ## MCP over stdio
 
-Install the optional MCP dependencies and let your agent host launch the bridge:
-
-```bash
-uv tool install 'fmind[mcp]'
-fmind mcp
-```
-
-For a host that accepts JSON configuration:
+Portfolio commands require only Typer and Rich; the optional `mcp` extra adds the [official MCP Python SDK](https://py.sdk.modelcontextprotocol.io/) (`uv tool install 'fmind[mcp]'` or `uv run --extra mcp fmind mcp` from a checkout):
 
 ```json
 {
@@ -118,29 +124,18 @@ For a host that accepts JSON configuration:
 }
 ```
 
-`fmind mcp` connects to `https://www.fmind.dev/mcp` using Streamable HTTP and forwards the website's tools, resources, and prompts over stdio. The website owns their names, schemas, and content. Set `FMIND_PROFILE_URL` in the host's environment to use `/mcp` on another website origin. No local data or response cache is used. The website answers MCP POST requests with JSON; GET/HEAD return `405` with `Allow: POST` because notification streams are not offered. Use `/health` for uptime probes. Requests have a 15-second deadline and remote HTTP responses are limited to 8 MiB. A request that exceeds these bounds or loses its connection fails on its own, and the bridge keeps serving.
-
-Stdout carries only MCP messages; startup errors go to stderr. Portfolio output flags such as `--json` do not apply to `mcp`. The bridge forwards read-only request/response operations; subscriptions and server-initiated sampling or elicitation are not advertised.
-
-From this checkout, run `uv run --extra mcp fmind mcp`. The optional extra uses the [official MCP Python SDK](https://py.sdk.modelcontextprotocol.io/); ordinary portfolio commands still need only Typer and Rich.
+`fmind mcp` bridges `https://www.fmind.dev/mcp` (or the `FMIND_PROFILE_URL` origin) from Streamable HTTP to protocol-only stdio without local caching (`--json` is rejected; startup errors go to stderr). Upstream MCP requests use finite JSON POSTs (`405` with `Allow: POST` on GET/HEAD; use `/health` for probes) and forward read-only tools, resources, and prompts (no subscriptions, sampling, or elicitation). Each exchange has a `15s` deadline and `8 MiB` response cap, failing individually without stopping the bridge.
 
 ## Development
 
 ```bash
-mise install       # install the pinned toolchain
-mise run install   # sync the locked environment and install hooks
-mise run format    # ruff imports and format, dprint
-mise run check     # lockfile, ruff, ty, dprint, jactionlint, betterleaks, dependency audit
-mise run test      # offline pytest with branch coverage
-mise run smoke     # exercise every command against the live site
-mise run build     # build the wheel and source distribution
-mise run all       # format, check, test, build — the gate CI runs
+mise install && mise run install  # toolchain, locked venv, and git hooks
+mise run all                      # format, check, test, build (CI gate)
+mise run smoke                    # live API/article and MCP compatibility check
 ```
 
-The pre-commit hook formats staged files and runs the offline checks (`mise run check:local`). The pre-push hook runs the dependency audit (`mise run check:network`) and the offline tests. CI runs the full gate on the pinned Python 3.15, tests Python 3.11–3.14 for compatibility, and tests the declared dependency floors with `--resolution lowest-direct` on Python 3.11.
-
-A release tag must match the version in `pyproject.toml` (for example, `v0.1.0`). CD reruns every CI job for that tag (the gate, the Python versions, and the dependency floors) and checks the live commands before publishing through PyPI Trusted Publishing. The live smoke check is a release check, not a pull-request gate.
+`mise tasks` lists individual `format`, `check` (`check:local` pre-commit; `check:network` + `test` pre-push), `test`, and `build` tasks. CI runs `mise run all` on Python 3.15, tests Python 3.14, and checks declared floors with `--resolution lowest-direct` on Python 3.14. Release tags (`vX.Y.Z` matching `pyproject.toml`) rerun CI and `mise run smoke` in CD before PyPI Trusted Publishing.
 
 ## License
 
-[MIT](LICENSE) — © 2026 Médéric Hurier (Fmind).
+[MIT](https://github.com/fmind/cli/blob/main/LICENSE) — © 2026 Médéric Hurier (Fmind).

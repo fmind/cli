@@ -1,45 +1,25 @@
 # AGENTS.md — cli
 
-Thin Python CLI that renders documents published by `www.fmind.dev`. It has no content of its own, no database, and no hosted server: portfolio commands fetch live documents and print them with Rich, while `fmind mcp` bridges the remote MCP server over stdio. The repository invariant is that **no portfolio fact is ever written down here** — if a command needs data, the website must publish it.
+Thin Python CLI (`typer` + `rich`; optional `mcp` extra) that renders live documents from `www.fmind.dev` and bridges its remote `/mcp` server over stdio. It has no database, hosted server, or local cache, and **no portfolio fact is ever written down here**—new data must be published by the website first.
 
-## Commands (mise)
+## Delivery
 
-`mise.toml` is the canonical task contract reused by Lefthook and CI. Run tasks from the repository root.
+- **Pass `mise run all` before done** ([README.md](README.md#development)): `mise.toml` owns the task contract (`format`, `check`, offline `test` at `>=85%` branch coverage with warnings as errors, and `build`). Pre-commit formats staged files and runs offline `check:local`; pre-push runs `check:network` (`uv audit`) and `test`; `check:leaks:full` scans complete Git history (`security.yml`).
+- **Keep live smoke out of merge gates**: `mise run smoke` (`tests/smoke.py`, `.github/workflows/compatibility.yml`) discovers CLI commands and live MCP catalogs/slugs—reporting API and MCP failures independently—on `main`, daily, and before release, never in offline `test` or PR CI.
+- **Release via skill**: follow [release](.agents/skills/release/SKILL.md) (`.claude/skills` symlinks `.agents/skills`). Hand-curate `CHANGELOG.md` without regenerating past releases; CD (`cd.yml`) reruns `ci.yml` (Python 3.15 gate, 3.14 compatibility, `--resolution lowest-direct` floors) and `smoke` on `v*` tags before PyPI Trusted Publishing.
 
-- `mise install` — install the pinned project toolchain.
-- `mise run install` — locked all-group, all-extra `uv` sync and Lefthook install.
-- `mise run format` — Ruff imports/format and dprint; `format:python` and `format:dprint` also take file paths.
-- `mise run check` — `check:local` (lockfile, Ruff, ty, dprint, jactionlint workflow audit, betterleaks scan of recent commits and staged changes) and `check:network` (dependency audit), in parallel.
-- `mise run check:leaks:full` — full-history secret scan; needs a complete clone.
-- `mise run test` — offline pytest with branch coverage of at least 85%.
-- `mise run smoke` — live API/article and MCP compatibility checks, run daily, on main pushes, manually, and before release; never a merge gate.
-- `mise run build` — build the wheel and source distribution.
-- `mise run all` — format, check, test, build. The single gate CI runs; hooks run its parts.
+## Invariants
 
-## Layout
+- **Treat upstream as sole source of truth**: fetch `https://www.fmind.dev/api/profile`, `…/api/news`, and `…/articles/<slug>.md` live on every call (`Cache-Control: no-cache`; no local cache, stale fallback, or `--refresh`). `PROFILE_SHAPE` and `NEWS_SHAPE` require only rendered keys, so newly consumed fields must be live (`mise run smoke`) before release.
+- **Derive one origin**: `FMIND_PROFILE_URL` overrides the profile endpoint; news, article reads, and `/mcp` derive their origin from it.
+- **Keep two base dependencies**: only `typer` and `rich` for portfolio commands; only `fmind.mcp` imports `mcp`/`mcp_types`/`httpx2` at module level (Ruff `TID253`). Raise lower bounds when `--resolution lowest-direct` fails.
+- **Validate untrusted inputs and responses**: match slugs against `SLUG_PATTERN`; enforce safe HTTP(S) redirects (no credentials or HTTPS downgrade), `15s` wall-clock deadline, and `8 MiB` size cap; parse strict JSON (`MAX_DEPTH = 32`, no `NaN`/`Infinity`, valid UTF-8, no `CONTROL_PATTERN` in rendered fields) and escape controls in errors and `--json`. Use synthetic test fixtures only.
+- **Fail in one line**: expected failures raise `FmindError` and exit `1` with `fmind: <what failed>` on stderr—never a traceback.
+- **Keep commands and options stable and minimal**: plural list commands grouped by API sections; bare `fmind` runs `whoami`; `--limit` bounds articles, search, news (`1` default, `10` with terms), and each project list; `--json` works before or after portfolio commands (taking precedence over `read --raw`); `search --tag` validates against `fmind tags`. Preserve `experience` order without inferring current status.
+- **Flush, trim, and guard paging**: flush stdout inside commands (routing Rich `BrokenPipeError` to Click) for quiet EPIPE exits; strip trailing whitespace even under forced colour; page `read` only when stdin/stdout are TTYs and terminfo knows `TERM` (not `dumb`).
+- **Keep text and JSON consistent**: use terminal-default body text and a single blue accent, stack entries with `render._entry` (never `Padding`, which crops long lines), and render unwrapped URLs with `render._link`. Document JSON schema migrations (`whoami`: `metadata`/`experience`/`services`; `certifications`: `certifications`/`thesis`/`specializations`; `projects`: `open_source`/`youtube_series`; `news`: editions with matching `items`).
+- **Forward MCP without caching**: keep stdio stdout protocol-only; forward remote tools, resources, and prompts without copying schemas or content; work with finite POST-only upstream (`405` on GET/HEAD without background streams), strip cache hints, bound `15s` / `8 MiB` per exchange, and propagate cancellation.
 
-- `.agents/skills/release/` — the release procedure; `.claude/skills` links to `.agents/skills` for Claude Code.
-- `.github/workflows/` — `ci.yml` (gate, Python matrix, dependency floors), `cd.yml` (reruns CI, then publishes to PyPI), `compatibility.yml` (live smoke on main pushes and daily), and `security.yml` (weekly full-history secret and dependency scans).
-- `CHANGELOG.md` — hand-curated release notes; never regenerate past releases.
-- `src/fmind/` — the package, one module per layer (see Conventions).
-- `tests/smoke.py` — the network-dependent live run behind `mise run smoke`.
+## Ownership
 
-## Conventions
-
-- **Upstream is the source of truth.** Commands read `https://www.fmind.dev/api/profile`, `…/api/news`, and `…/articles/<slug>.md`. A new section means a new key or endpoint published by the website first, then a command here. Never inline a fact, a date, or a URL that the website already publishes. `PROFILE_SHAPE` and `NEWS_SHAPE` require only the keys a command renders, so a field this CLI starts reading must be live on the website before the release that reads it; `mise run smoke` is that check.
-- **One origin.** `FMIND_PROFILE_URL` overrides the profile endpoint, and news and article reads and the `/mcp` bridge derive their origin from it, so a single variable points the whole CLI at a local website.
-- **Layers stay apart.** `api` does I/O, `articles` and `news` are pure selection, `render` builds renderables without I/O, `cli` wires them and owns exit codes, and `mcp` is the optional stdio bridge. Tests target the layer, not the seam.
-- **Failures are one line.** Every expected failure raises `FmindError` and surfaces as `fmind: <what failed>` on stderr with exit code 1. A traceback reaching the user is a bug.
-- **Live data only.** Every invocation fetches from the website with HTTP cache revalidation. Do not add a local cache, stale fallback, or `--refresh`; network failures are explicit errors.
-- **Untrusted input.** Slugs reach a URL, so they are matched against `SLUG_PATTERN` before use. Portfolio downloads have a total deadline and size bound; responses are shape-checked strict JSON (no `NaN`/`Infinity`) and every JSON string/key must contain valid Unicode. Escape terminal controls in errors and `--json` output as well as validating rendered fields. Test fixtures use synthetic facts, not a copy of the portfolio.
-- **Two dependencies.** Typer and Rich for portfolio commands. The optional `mcp` extra owns the official SDK and its typed HTTP/protocol dependencies; only `fmind.mcp` imports them at module level, which Ruff `TID253` enforces. Adding another base dependency needs a reason that outweighs the install cost of an easter egg people run once. Lower bounds are real: CI runs the suite with `--resolution lowest-direct`, so raise a floor when that job fails.
-- **Offline tests.** `mise run test` never touches the network; the live check is `mise run smoke`, run before a release.
-- **Options stay few and mean one thing.** `--limit` bounds articles, search, news editions (1 by default, 10 with terms), and each project list; `--json` selects the output format; `--raw` prints an article's source. Search also accepts `--tag`, validated against the published `tags` that `fmind tags` lists; use `--json` piped through `jq` for other filters. A bare `fmind` shows the `whoami` card.
-- **Experience status.** Preserve the published order without inferring that the first engagement is current; the profile does not publish employment dates or a current-status field.
-- **Stable command names.** Commands group the website's API sections, and list commands are plural. Website navigation and design changes do not require CLI renames.
-- **Output.** `--json` works before or after each portfolio command; JSON is undecorated stdout and takes precedence over `read --raw`. Root colour flags use terminal detection by default. Flush stdout inside the command so a closed reader surfaces as Click's quiet EPIPE exit, never an interpreter-shutdown warning. Text output is trimmed of trailing whitespace, even with forced colour; `read` pages only when stdin and stdout are terminals and terminfo knows `TERM` (not `dumb`); otherwise less waits at a prompt that its hidden stderr leaves blank.
-- **Presentation.** Use terminal-default body text and a single blue accent; community and credential entries stack vertically with published links. Render links with `render._link` (never folded or cropped) and separate entries with `render._entry`, not `Padding`, which crops long lines. `whoami` JSON includes the featured `experience` list; credential JSON groups `certifications`, `thesis`, and `specializations`; project JSON groups `open_source` and `youtube_series`; news JSON lists editions, and a search keeps only their matching `items`. Keep text and JSON information consistent and document schema migrations.
-- **MCP.** Forward remote tools, resources, and prompts without copying their schemas or content. Stdio stdout is protocol-only. The upstream uses finite POST responses and rejects GET/HEAD notification streams with 405; clients must continue normal request/response operations without a background stream. Disable SDK caching, bound remote responses and request duration, and propagate cancellation. Offline protocol tests use synthetic upstream data; `mise run smoke` makes a real subprocess call through the bridge.
-- **Compatibility monitoring.** `.github/workflows/compatibility.yml` reuses `mise run smoke` independently of offline CI. Discover commands and MCP catalogs instead of maintaining content snapshots. Exercise tool calls, resource reads, and prompts, discovering required arguments such as article and news slugs from the live documents, and report API and MCP failures independently. Content additions need no CLI release; removed or changed consumed fields need a tested client update.
-- **Hooks.** Pre-commit formats the staged files, restages them, and runs `mise run check:local`, so an offline commit works; pre-push runs `mise run check:network` and `mise run test` in parallel.
-- **Commits and releases.** Conventional Commits. Follow the [release skill](.agents/skills/release/SKILL.md) for a release; CD reruns every CI job and the live smoke check on the `v*` tag before PyPI Trusted Publishing.
+- `src/fmind/`: `api.py` (HTTP I/O and validation), `articles.py` and `news.py` (pure selection), `render.py` (pure Rich renderables), `cli.py` (Typer commands and exit codes), `mcp.py` (optional stdio-to-Streamable-HTTP bridge). Tests in `tests/` target the owning layer, not the seam.

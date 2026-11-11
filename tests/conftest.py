@@ -1,7 +1,5 @@
 """Shared fixtures: synthetic profile and news documents and an offline network boundary."""
 
-from __future__ import annotations
-
 import json
 from typing import Any
 
@@ -87,8 +85,8 @@ def document() -> dict[str, Any]:
         "tags": [{"name": "Agent", "description": "d"}, {"name": "LLM", "description": "d"}],
         "articles": [
             {
-                "date": "2024-08-16",
-                "updated": None,
+                "date": "2024-08-16T00:00:00Z",
+                "updated": "2024-08-16T00:00:00Z",
                 "title": "Newer",
                 "description": "d",
                 "slug": "newer",
@@ -99,8 +97,8 @@ def document() -> dict[str, Any]:
                 "reading_minutes": 9,
             },
             {
-                "date": "2024-01-01",
-                "updated": None,
+                "date": "2024-01-01T00:00:00Z",
+                "updated": "2024-01-01T00:00:00Z",
                 "title": "Older",
                 "description": "d",
                 "slug": "older",
@@ -204,6 +202,7 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     def denied(*args: object, **kwargs: object) -> None:
         raise AssertionError("network access is forbidden in offline tests")
 
+    monkeypatch.setattr("fmind.api._OPENER.open", denied)
     monkeypatch.setattr("urllib.request.urlopen", denied)
     monkeypatch.setattr("httpx2.AsyncHTTPTransport.handle_async_request", denied)
     monkeypatch.delenv("FMIND_PROFILE_URL", raising=False)

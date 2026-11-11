@@ -1,4 +1,4 @@
-# https://packaging.python.org/en/latest/specifications/pyproject-toml/
+# Docs: https://packaging.python.org/en/latest/specifications/pyproject-toml/
 [project]
 name = "fmind"
 version = "2.1.0"
@@ -7,12 +7,14 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Médéric Hurier", email = "contact@fmind.dev" }]
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 keywords = ["portfolio", "cli", "fmind", "resume", "articles", "news", "mcp"]
 classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Topic :: Utilities",
 ]
 dependencies = ["typer>=0.26", "rich>=13.9"]
@@ -37,7 +39,7 @@ dev = [
   "pytest>=8.3",
   "pytest-cov>=6.0",
   "ruff>=0.9",
-  "ty>=0.0.1a1",
+  "ty>=0.0.101,<0.1",
 ]
 
 [build-system]
@@ -50,22 +52,57 @@ module-root = "src"
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+extend-exclude = ["*.md"]
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "S", "SIM", "RUF", "TID"]
+select = [
+  "A",
+  "ASYNC",
+  "B",
+  "C4",
+  "E",
+  "ERA",
+  "F",
+  "FURB",
+  "I",
+  "ISC",
+  "LOG",
+  "N",
+  "PERF",
+  "PGH",
+  "PIE",
+  "PT",
+  "PTH",
+  "Q",
+  "RET",
+  "RSE",
+  "RUF",
+  "S",
+  "SIM",
+  "SLF",
+  "T10",
+  "T20",
+  "TID",
+  "UP",
+  "W",
+]
 [tool.ruff.lint.flake8-tidy-imports]
 # Portfolio commands run without the optional `mcp` extra; only the bridge loads it.
 banned-module-level-imports = ["fmind.mcp", "httpx2", "mcp", "mcp_types"]
 [tool.ruff.lint.per-file-ignores]
 "src/fmind/mcp.py" = ["TID253"] # the bridge is the extra's only importer
-"tests/**" = ["S101", "TID253"] # assertions are the point of a test; tests install every extra
+"tests/**" = ["S101", "SLF001", "T201", "TID253"] # tests assert, inspect layer internals, and install every extra
 [tool.ruff.format]
 docstring-code-format = true
+line-ending = "lf"
+
+[tool.ty.rules]
+blanket-ignore-comment = "error"
 
 [tool.pytest.ini_options]
-addopts = "-ra --strict-markers --cov=fmind --cov-branch --cov-fail-under=85"
+addopts = "-ra --strict-config --strict-markers --cov=fmind --cov-branch --cov-fail-under=85"
 testpaths = ["tests"]
 filterwarnings = ["error"]
+xfail_strict = true
 
 [tool.coverage.report]
 exclude_also = ["if __name__ == .__main__.:", "raise NotImplementedError"]

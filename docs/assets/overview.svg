@@ -1,0 +1,89 @@
+<!-- Docs: https://developer.mozilla.org/en/US/docs/Web/SVG -->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="356" viewBox="0 0 960 356" role="img" aria-labelledby="title desc">
+<title id="title">How fmind serves live www.fmind.dev content to terminals, shell scripts, and MCP agents</title>
+<desc id="desc">Live endpoints on www.fmind.dev (/api/profile, /api/news, /articles/*.md, and /mcp) are fetched over HTTPS with Cache-Control: no-cache. Inside the stateless fmind CLI, FMIND_PROFILE_URL moves every endpoint together across two paths: api and render (Typer and Rich) for portfolio and news commands, and fmind mcp (optional mcp extra) for the stdio MCP bridge. Every response is validated with a 15-second deadline, 8 MiB limit, terminal-control filtering, and zero local cache before emitting formatted terminal text, undecorated JSON or Markdown for shell pipelines, or stdio JSON-RPC for MCP agent hosts.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="arrowhead" d="M0 0 L10 5 L0 10 Z"/></marker>
+<style>
+text { font-family: "Google Sans", "Google Sans Text", Roboto, "Segoe UI", Helvetica, Arial, sans-serif; fill: #202124; }
+.code { font-family: "Google Sans Code", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+.card { fill: #FFFFFF; stroke: #DADCE0; }
+.label { font-size: 12px; font-weight: 700; fill: #595D62; }
+.chip { fill: #F1F3F4; }
+.chip-text { font-size: 13.5px; }
+.out-title { font-size: 14px; font-weight: 700; }
+.muted { font-size: 12.5px; fill: #595D62; }
+.box { fill: #FFFFFF; stroke: #174EA6; stroke-width: 2; }
+.tile { fill: #D2E3FC; }
+.tile-title { font-size: 14px; font-weight: 700; fill: #174EA6; }
+.tile-sub { font-size: 12.5px; fill: #202124; }
+.config { fill: #FEEFC3; stroke: #E37400; }
+.guard { fill: #CEEAD6; stroke: #34A853; }
+.guard-title { font-size: 13.5px; font-weight: 700; fill: #0D652D; }
+.guard-sub { font-size: 12.5px; fill: #202124; }
+.step { fill: #174EA6; }
+.step-text { font-size: 13px; font-weight: 700; fill: #FFFFFF; }
+.flow { fill: none; stroke: #174EA6; stroke-width: 2; }
+.arrowhead { fill: #174EA6; }
+</style>
+</defs>
+<rect class="card" x="1" y="1" width="958" height="354" rx="16"/>
+
+<!-- Live origin -->
+<text class="label" x="144" y="42" text-anchor="middle">Live origin · www.fmind.dev</text>
+<g text-anchor="middle">
+<rect class="chip" x="32" y="103" width="224" height="34" rx="17"/>
+<text class="chip-text" x="144" y="125"><tspan class="code">/api/profile</tspan> · portfolio</text>
+<rect class="chip" x="32" y="151" width="224" height="34" rx="17"/>
+<text class="chip-text" x="144" y="173"><tspan class="code">/api/news</tspan> · daily links</text>
+<rect class="chip" x="32" y="199" width="224" height="34" rx="17"/>
+<text class="chip-text" x="144" y="221"><tspan class="code">/articles/*.md</tspan> · prose</text>
+<rect class="chip" x="32" y="247" width="224" height="34" rx="17"/>
+<text class="chip-text" x="144" y="269"><tspan class="code">/mcp</tspan> · HTTP POST</text>
+</g>
+
+<!-- 1 Fetch -->
+<circle class="step" cx="288" cy="164" r="11"/><text class="step-text" x="288" y="168.5" text-anchor="middle">1</text>
+<line class="flow" x1="262" y1="192" x2="314" y2="192" marker-end="url(#arrow)"/>
+<text class="muted" x="288" y="214" text-anchor="middle">HTTPS</text>
+<text class="muted" x="288" y="231" text-anchor="middle">no-cache</text>
+
+<!-- Stateless CLI -->
+<text class="label" x="480" y="42" text-anchor="middle">Stateless CLI · fmind</text>
+<rect class="box" x="320" y="60" width="320" height="264" rx="14"/>
+<rect class="config" x="340" y="78" width="280" height="54" rx="10"/>
+<text class="code" x="480" y="100" text-anchor="middle" style="font-size:14px;font-weight:700">FMIND_PROFILE_URL</text>
+<text class="muted" x="480" y="120" text-anchor="middle">moves every endpoint together</text>
+<g text-anchor="middle">
+<rect class="tile" x="340" y="146" width="134" height="56" rx="10"/>
+<text class="tile-title" x="407" y="169"><tspan class="code">api</tspan> · <tspan class="code">render</tspan></text>
+<text class="tile-sub" x="407" y="190">Typer + Rich</text>
+<rect class="tile" x="486" y="146" width="134" height="56" rx="10"/>
+<text class="code tile-title" x="553" y="169">fmind mcp</text>
+<text class="tile-sub" x="553" y="190">optional [mcp]</text>
+<rect class="guard" x="340" y="216" width="280" height="56" rx="10"/>
+<text class="guard-title" x="480" y="239">Validated · zero local cache</text>
+<text class="guard-sub" x="480" y="259">15s deadline · 8 MiB cap · safe text</text>
+</g>
+<text class="muted" x="480" y="304" text-anchor="middle">errors exit 1 on one stderr line</text>
+
+<!-- 2 Emit -->
+<circle class="step" cx="672" cy="164" r="11"/><text class="step-text" x="672" y="168.5" text-anchor="middle">2</text>
+<line class="flow" x1="646" y1="192" x2="698" y2="192" marker-end="url(#arrow)"/>
+<text class="code muted" x="672" y="214" text-anchor="middle">stdout</text>
+<text class="muted" x="672" y="231" text-anchor="middle">or stdio</text>
+
+<!-- Outputs -->
+<text class="label" x="816" y="42" text-anchor="middle">Terminal, shell &amp; agents</text>
+<g text-anchor="middle">
+<rect class="chip" x="704" y="97" width="224" height="54" rx="12"/>
+<text class="out-title" x="816" y="119">Interactive terminal</text>
+<text class="muted" x="816" y="139">OSC 8 links · <tspan class="code">$PAGER</tspan></text>
+<rect class="chip" x="704" y="165" width="224" height="54" rx="12"/>
+<text class="out-title" x="816" y="187">Shell pipelines</text>
+<text class="muted" x="816" y="207"><tspan class="code">--json</tspan> · <tspan class="code">jq</tspan> · <tspan class="code">--raw</tspan></text>
+<rect class="chip" x="704" y="233" width="224" height="54" rx="12"/>
+<text class="out-title" x="816" y="255">MCP agent hosts</text>
+<text class="muted" x="816" y="275">tools · resources · prompts</text>
+</g>
+</svg>

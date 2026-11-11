@@ -1,7 +1,5 @@
 """Live website compatibility checks, shared by local use, monitoring, and CD."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os

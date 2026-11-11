@@ -40,7 +40,7 @@ jobs:
       fail-fast: false
       matrix:
         # The gate covers the pinned interpreter; a pin bump must move the old pin here.
-        python: ["3.11", "3.12", "3.13", "3.14"]
+        python: ["3.14"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,4 +72,4 @@ jobs:
       # The published wheel promises these floors; the lockfile only proves the latest
       # versions. Re-resolving rewrites uv.lock on this throwaway runner only.
       - name: Run the test suite at the declared lower bounds
-        run: uv run --resolution lowest-direct --all-groups --all-extras --python 3.11 pytest
+        run: uv run --resolution lowest-direct --all-groups --all-extras --python 3.14 pytest

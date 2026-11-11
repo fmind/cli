@@ -1,7 +1,5 @@
 """Article selection: newest first, term matching, and slug resolution."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from fmind import articles
@@ -11,6 +9,11 @@ def test_latest_is_newest_first_and_bounded(document: dict[str, Any]) -> None:
     assert [a["title"] for a in articles.latest(document["articles"], limit=9)] == ["Newer", "Older"]
     assert [a["title"] for a in articles.latest(document["articles"], limit=1)] == ["Newer"]
     assert articles.latest(document["articles"], limit=0) == []
+    same_day = [
+        {**document["articles"][0], "slug": "zeta"},
+        {**document["articles"][0], "slug": "alpha"},
+    ]
+    assert [a["slug"] for a in articles.latest(same_day, limit=9)] == ["alpha", "zeta"]
 
 
 def test_search_matches_title_summary_slug_and_tags(document: dict[str, Any]) -> None:
@@ -45,5 +48,6 @@ def test_candidates_prefers_an_exact_slug(document: dict[str, Any]) -> None:
 
 def test_by_slug_returns_the_index_entry(document: dict[str, Any]) -> None:
     found = articles.by_slug(document["articles"], "older")
-    assert found is not None and found["title"] == "Older"
+    assert found is not None
+    assert found["title"] == "Older"
     assert articles.by_slug(document["articles"], "absent") is None
