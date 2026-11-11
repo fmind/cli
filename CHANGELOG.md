@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.0.0] - 2026-11-11
+
+### 🚀 Features
+
+- _(python)_ [**breaking**] Require Python 3.14 or newer (`uvx fmind` selects a compatible interpreter automatically)
+- _(projects)_ Link each open-source project's separate code repository when its project URL points elsewhere
+
+### 🐛 Bug Fixes
+
+- _(read)_ Use standard ANSI colour slots for fenced code blocks so dark and light terminal themes stay readable
+- _(api)_ Block cross-scheme, credentialed, and HTTPS-downgrade redirects, reject oversized `Content-Length` responses before reading the body, and validate project `repo` URLs
+- _(cli)_ Route broken-pipe writes cleanly without leaking file descriptors, keep long social labels separated from URLs in `whoami`, and match the website's deterministic slug tie-break order
+
+### 🧹 Miscellaneous
+
+- _(deps)_ Upgrade locked Python dependencies (`typer 0.29.1`, `markdown-it-py 4.3.0`) and `mise`
+
 ## [2.1.0] - 2026-11-08
 
 ### 🚀 Features
