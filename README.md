@@ -134,7 +134,7 @@ mise run all                      # format, check, test, build (CI gate)
 mise run smoke                    # live API/article and MCP compatibility check
 ```
 
-`mise tasks` lists individual `format`, `check` (`check:local` pre-commit; `check:network` + `test` pre-push), `test`, and `build` tasks. CI runs `mise run all` on Python 3.15, tests Python 3.14, and checks declared floors with `--resolution lowest-direct` on Python 3.14. Release tags (`vX.Y.Z` matching `pyproject.toml`) rerun CI and `mise run smoke` in CD before PyPI Trusted Publishing.
+`mise tasks` lists individual `format`, `check` (`check:local` pre-commit; `check:network` + `test` pre-push), `test`, and `build` tasks. CI runs `mise run all` on Python 3.15, tests Python 3.14, and checks declared floors with `--resolution lowest-direct` on Python 3.14. Release tags (`vX.Y.Z` matching `pyproject.toml` and `CHANGELOG.md`) rerun CI and `mise run smoke` in CD before publishing automatically to PyPI Trusted Publishing and GitHub Releases.
 
 ## License
 

@@ -6,7 +6,7 @@ Thin Python CLI (`typer` + `rich`; optional `mcp` extra) that renders live docum
 
 - **Pass `mise run all` before done** ([README.md](README.md#development)): `mise.toml` owns the task contract (`format`, `check`, offline `test` at `>=85%` branch coverage with warnings as errors, and `build`). Pre-commit formats staged files and runs offline `check:local`; pre-push runs `check:network` (`uv audit`) and `test`; `check:leaks:full` scans complete Git history (`security.yml`).
 - **Keep live smoke out of merge gates**: `mise run smoke` (`tests/smoke.py`, `.github/workflows/compatibility.yml`) discovers CLI commands and live MCP catalogs/slugs—reporting API and MCP failures independently—on `main`, daily, and before release, never in offline `test` or PR CI.
-- **Release via skill**: follow [release](.agents/skills/release/SKILL.md) (`.claude/skills` symlinks `.agents/skills`). Hand-curate `CHANGELOG.md` without regenerating past releases; CD (`cd.yml`) reruns `ci.yml` (Python 3.15 gate, 3.14 compatibility, `--resolution lowest-direct` floors) and `smoke` on `v*` tags before PyPI Trusted Publishing.
+- **Release via skill**: follow [release](.agents/skills/release/SKILL.md) (`.claude/skills` symlinks `.agents/skills`). Hand-curate `CHANGELOG.md` without regenerating past releases; CD (`cd.yml`) reruns `ci.yml` (Python 3.15 gate, 3.14 compatibility, `--resolution lowest-direct` floors) and `smoke` on `v*` tags before unattended PyPI Trusted Publishing and GitHub Release creation.
 
 ## Invariants
 
