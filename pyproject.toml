@@ -6,7 +6,7 @@ description = "Read Médéric Hurier's (Fmind) portfolio and daily news from the
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Médéric Hurier", email = "contact@fmind.dev" }]
+authors = [{ name = "Médéric Hurier" }]
 requires-python = ">=3.14"
 keywords = ["portfolio", "cli", "fmind", "resume", "articles", "news", "mcp"]
 classifiers = [
@@ -21,8 +21,10 @@ dependencies = ["typer>=0.26", "rich>=13.9"]
 
 [project.urls]
 Homepage = "https://www.fmind.dev/"
-Source = "https://github.com/fmind/cli"
+Repository = "https://github.com/fmind/cli"
+Changelog = "https://github.com/fmind/cli/blob/main/CHANGELOG.md"
 Issues = "https://github.com/fmind/cli/issues"
+Security = "https://github.com/fmind/cli/security/policy"
 
 [project.scripts]
 fmind = "fmind.cli:app"
