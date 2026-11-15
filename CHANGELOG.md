@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.0.1] - 2026-11-15
+
+### 🧹 Miscellaneous
+
+- _(pypi)_ Publish verified repository, changelog, issue, and security policy links in package metadata and omit the unverified author email
+
 ## [3.0.0] - 2026-11-11
 
 ### 🚀 Features
