@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.0.3] - 2026-11-22
+
+### 🐛 Bug Fixes
+
+- _(cli)_ Suppress ANSI SGR and OSC 8 escapes under `--no-color` and `NO_COLOR` (including on TTYs, in `$PAGER`, and under `FORCE_COLOR`), render plain `--help` without `<bool>` flag metavars or forced CI colour, distinguish broken MCP installs from missing `[mcp]` extras, and cut startup latency with lazy metadata and command-module imports
+- _(api)_ Strip `Authorization`, `Proxy-Authorization`, and `Cookie` headers on HTTP redirects, read proxy settings at call time, reject Unicode bidirectional control characters across rendered text, Markdown, `--json`, and errors, and expose typed `TypedDict` return contracts
+- _(render)_ Restrict clickable OSC 8 terminal links to printable non-whitespace ASCII and compute tag counts in a single pass
+- _(mcp)_ Normalize `Content-Encoding` case-insensitively, cap HTTP redirects at 3, and bound the startup handshake by the 15s deadline
+
 ## [3.0.2] - 2026-11-22
 
 ### 🐛 Bug Fixes
