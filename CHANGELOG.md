@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.0.4] - 2026-11-22
+
+### 📚 Documentation
+
+- _(readme)_ Simplify installation, commands, examples, piping, and MCP documentation
+
 ## [3.0.3] - 2026-11-22
 
 ### 🐛 Bug Fixes
