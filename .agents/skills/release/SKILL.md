@@ -7,7 +7,7 @@ metadata:
   author: Médéric HURIER (Fmind)
   source: github.com/fmind/cli/tree/main/.agents/skills/release
   created: "2026-10-31"
-  updated: "2026-11-12"
+  updated: "2026-11-22"
 ---
 
 # Release
@@ -17,9 +17,9 @@ One owner instruction to release authorizes the entire automated flow end-to-end
 ## Workflow
 
 1. **Inspect state**: check `git status`, `main` against `origin/main`, local and remote tags (`git ls-remote --tags origin`), and the latest PyPI version (`curl -fsS https://pypi.org/pypi/fmind/json | jq -r .info.version`). Include only reviewed work.
-1. **Select version**: use the owner's version; otherwise derive it with `git-cliff --config ~/.config/git-cliff/cliff.toml --unreleased --bumped-version`. A removed command, option, or `--json` field is a major release and needs a README `Migration to X.0.0` note; raising `requires-python` is also a major SemVer bump.
+1. **Select version**: use the owner's version; otherwise derive it with `git-cliff --unreleased --bumped-version`. A removed command, option, or `--json` field is a major release and needs a README `Migration to X.0.0` note; raising `requires-python` is also a major SemVer bump.
 1. **Bump package version**: run `uv version X.Y.Z` to update `pyproject.toml` and `uv.lock`.
-1. **Curate `CHANGELOG.md` by hand**: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` (UTC date), or draft the section with `git-cliff --config ~/.config/git-cliff/cliff.toml --unreleased --tag vX.Y.Z --prepend CHANGELOG.md` and rewrite it. Never run `git-cliff -o` or `--bump -o` (which overwrite past curated notes). Keep user-facing bullets under the existing section names, drop internal refactor, docs, and CI entries, and replace the section on retries.
+1. **Curate `CHANGELOG.md` by hand**: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` (UTC date), or draft the section with `git-cliff --unreleased --tag vX.Y.Z --prepend CHANGELOG.md` and rewrite it. Never run `git-cliff -o` or `--bump -o` (which overwrite past curated notes). Keep user-facing bullets under the existing section names, drop internal refactor, docs, and CI entries, and replace the section on retries.
 1. **Gate locally**: run `mise run all` and `mise run smoke` with zero warnings; fix any website/CLI contract failure before releasing.
 1. **Commit and push `main`**: review `git diff`, commit only the release metadata (`CHANGELOG.md`, `pyproject.toml`, `uv.lock`) as `chore(release): vX.Y.Z`, and push `main`.
 1. **Wait for CI on `HEAD`**: run `sha=$(git rev-parse HEAD)`, locate `ci.yml` with `gh run list --workflow ci.yml --commit "$sha" --json databaseId`, and run `gh run watch <run-id> --exit-status`. Every job (`gate`, `compat`, `lowest`) must succeed.
@@ -29,7 +29,8 @@ One owner instruction to release authorizes the entire automated flow end-to-end
    - Peeled tag SHA: `git ls-remote --exit-code --tags origin refs/tags/vX.Y.Z 'refs/tags/vX.Y.Z^{}'`
    - PyPI version: `curl -fsS https://pypi.org/pypi/fmind/X.Y.Z/json | jq -r .info.version`
    - PyPI provenance: `curl -fsS -H 'Accept: application/vnd.pypi.integrity.v1+json' https://pypi.org/integrity/fmind/X.Y.Z/fmind-X.Y.Z-py3-none-any.whl/provenance | jq '.attestation_bundles[].publisher'` (`repository: "fmind/cli"`, `workflow: "cd.yml"`, `environment: "pypi"`)
-   - GitHub attestation & release: `gh release view vX.Y.Z --json tagName,isDraft,isImmutable,assets,url` and `uvx --refresh fmind@X.Y.Z --version`
+   - GitHub release & artifact attestations: download into a temp dir with `gh release download vX.Y.Z -R fmind/cli --dir "$dir"`, run `gh release view vX.Y.Z -R fmind/cli --json tagName,isDraft,isImmutable,assets,url`, `gh release verify vX.Y.Z -R fmind/cli`, and verify each distribution via `gh attestation verify "$dir"/fmind-X.Y.Z-* --repo fmind/cli --signer-workflow fmind/cli/.github/workflows/cd.yml --source-ref refs/tags/vX.Y.Z --source-digest "$sha"`.
+   - Published CLI install: `uvx --refresh fmind@X.Y.Z --version`
 
 ## Gotchas
 
