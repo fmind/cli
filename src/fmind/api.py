@@ -11,9 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import IO, Any
-
-from fmind import __version__
+from typing import IO, Any, NotRequired, TypedDict, cast
 
 PROFILE_URL = "https://www.fmind.dev/api/profile"
 NEWS_PATH = "/api/news"
@@ -23,11 +21,175 @@ MAX_BYTES = 8 * 1024 * 1024
 # `--json` re-indents forwarded fields, so output grows with the square of their
 # nesting; the published profile nests four levels.
 MAX_DEPTH = 32
-USER_AGENT = f"fmind/{__version__} (+https://github.com/fmind/cli)"
 # Slugs reach a URL, so only the shape the site actually mints is accepted.
 SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
-# Keep tabs, LF, and CRLF, but never let website text issue terminal commands or bare CR overwrites.
-CONTROL_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]|\r(?!\n)")
+# Keep tabs, LF, and CRLF, but never let website text issue terminal commands, bare CR overwrites, or bidi spoofing.
+CONTROL_PATTERN = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]|\r(?!\n)"
+)
+_SENSITIVE_REDIRECT_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie"})
+
+
+class Social(TypedDict):
+    name: str
+    url: str
+
+
+class Metadata(TypedDict):
+    name: str
+    alternate_name: str
+    job_title: str
+    headline_primary: str
+    headline_secondary: str
+    work_location: str
+    email: str
+    site_url: str
+    socials: list[Social]
+
+
+class Expertise(TypedDict):
+    title: str
+    description: str
+
+
+class Experience(TypedDict):
+    company: str
+    title: str
+    description: str
+    tags: list[str]
+
+
+class Leadership(TypedDict):
+    organization: str
+    role: str
+    description: str
+    url: str
+
+
+class Certification(TypedDict):
+    title: str
+    issuer: str
+    active: bool
+    url: str
+
+
+class Specialization(TypedDict):
+    title: str
+    issuer_details: str
+    url: str
+
+
+class ThesisLink(TypedDict):
+    label: str
+    url: str
+
+
+class Thesis(TypedDict):
+    title: str
+    institution_details: str
+    description: str
+    url: str
+    links: NotRequired[list[ThesisLink] | None]
+
+
+class Paper(TypedDict):
+    title: str
+    venue: str
+    url: str
+    code: str
+    code_label: str
+
+
+class OpenSourceProject(TypedDict):
+    title: str
+    description: str
+    href: str
+    repo: NotRequired[str | None]
+
+
+class YoutubeSeries(TypedDict):
+    title: str
+    description: str
+    url: str
+
+
+class SitePage(TypedDict):
+    title: str
+    description: str
+    audience: str
+    url: str
+
+
+class Article(TypedDict):
+    title: str
+    description: str
+    slug: str
+    date: str
+    tags: list[str]
+    reading_minutes: int
+
+
+class Service(TypedDict):
+    title: str
+    description: str
+    badge: str
+    cta_url: str
+
+
+class Tag(TypedDict):
+    name: str
+    description: str
+
+
+class ProjectsPayload(TypedDict):
+    open_source: list[OpenSourceProject]
+    youtube_series: list[YoutubeSeries]
+
+
+class Profile(TypedDict):
+    metadata: Metadata
+    biography: list[str]
+    expertise: list[Expertise]
+    experience: list[Experience]
+    leadership: list[Leadership]
+    certifications: list[Certification]
+    specializations: list[Specialization]
+    thesis: Thesis
+    papers: list[Paper]
+    open_source: list[OpenSourceProject]
+    youtube_series: list[YoutubeSeries]
+    site_pages: list[SitePage]
+    articles: list[Article]
+    services: list[Service]
+    tags: list[Tag]
+
+
+class NewsItem(TypedDict):
+    title: str
+    url: str
+    domain: str
+    description: str
+
+
+class NewsEdition(TypedDict):
+    slug: str
+    date: str
+    title: str
+    url: str
+    items: list[NewsItem]
+
+
+class NewsArchive(TypedDict):
+    url: str
+    editions: list[NewsEdition]
+
+
+def user_agent() -> str:
+    """Return the HTTP User-Agent string without importing package metadata at module import time."""
+    from fmind import __version__
+
+    return f"fmind/{__version__} (+https://github.com/fmind/cli)"
+
 
 # Only fields consumed by this CLI are required; new website fields pass through.
 PROFILE_SHAPE = {
@@ -189,21 +351,29 @@ class _RedirectHandler(urllib.request.HTTPRedirectHandler):
         if source.scheme == "https" and target.scheme != "https":
             fp.close()
             raise FmindError("the website redirected from HTTPS to plain HTTP")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        # Drop credentials on redirects so Proxy-Authorization/Authorization/Cookie
+        # never leak across origins or when a redirect bypasses an authenticated proxy.
+        for header_map in (getattr(redirected, "headers", {}), getattr(redirected, "unredirected_hdrs", {})):
+            for key in [k for k in header_map if k.lower() in _SENSITIVE_REDIRECT_HEADERS]:
+                del header_map[key]
+        return redirected
 
 
-_OPENER = urllib.request.build_opener(_RedirectHandler())
+def _open(request: urllib.request.Request, *, timeout: float) -> Any:
+    """Open a request with a fresh opener so proxy environment changes apply at call time."""
+    return urllib.request.build_opener(_RedirectHandler()).open(request, timeout=timeout)
 
 
 def _fetch(url: str, accept: str, deadline: float) -> bytes:
     """Perform bounded I/O; never print or mutate caller state from the worker."""
     # Ask intermediary HTTP caches to revalidate too; no local copy is kept.
-    headers = {"User-Agent": USER_AGENT, "Accept": accept, "Cache-Control": "no-cache"}
+    headers = {"User-Agent": user_agent(), "Accept": accept, "Cache-Control": "no-cache"}
     try:
         if time.monotonic() >= deadline:
             raise TimeoutError("website request deadline exceeded")
         request = urllib.request.Request(url, headers=headers)  # noqa: S310
-        with _OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:
+        with _open(request, timeout=TIMEOUT_SECONDS) as response:
             length = response.headers.get("Content-Length")
             expected = int(length) if length is not None else None
             if expected is not None and expected < 0:
@@ -293,7 +463,7 @@ def _parse_json(payload: bytes, shape: object, name: str) -> dict[str, Any]:
     return document
 
 
-def _parse_profile(payload: bytes) -> dict[str, Any]:
+def _parse_profile(payload: bytes) -> Profile:
     """Decode the portfolio document behind every section command."""
     document = _parse_json(payload, PROFILE_SHAPE, "profile")
     links = document["thesis"].get("links")
@@ -303,7 +473,7 @@ def _parse_profile(payload: bytes) -> dict[str, Any]:
         repo = project.get("repo")
         if repo is not None:
             _validate(repo, str, f"profile.open_source[{index}].repo")
-    return document
+    return cast(Profile, document)
 
 
 def _parse_markdown(payload: bytes) -> str:
@@ -319,14 +489,14 @@ def _parse_markdown(payload: bytes) -> str:
     return text
 
 
-def load_profile() -> dict[str, Any]:
+def load_profile() -> Profile:
     """Return the portfolio document behind every section command."""
     return _parse_profile(_download(_profile_url()))
 
 
-def load_news() -> dict[str, Any]:
+def load_news() -> NewsArchive:
     """Return the daily news archive, on the same origin as the profile."""
-    return _parse_json(_download(origin_url(NEWS_PATH)), NEWS_SHAPE, "news")
+    return cast(NewsArchive, _parse_json(_download(origin_url(NEWS_PATH)), NEWS_SHAPE, "news"))
 
 
 def load_article(slug: str) -> str:

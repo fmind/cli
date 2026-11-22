@@ -10,9 +10,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from unittest.mock import create_autospec
 
 import pytest
 
+import fmind
 from fmind import api
 
 
@@ -243,6 +245,12 @@ def test_article_requires_utf8() -> None:
         api._parse_markdown(b"\xff")
 
 
+def test_package_getattr_exposes_version_and_rejects_unknown() -> None:
+    assert isinstance(fmind.__version__, str)
+    with pytest.raises(AttributeError, match="no attribute"):
+        _ = fmind.__getattr__("nonexistent")
+
+
 def test_transport_revalidates_http_caches_and_bounds_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     reads = 0
 
@@ -259,33 +267,57 @@ def test_transport_revalidates_http_caches_and_bounds_reads(monkeypatch: pytest.
         assert timeout == 15.0
         return TrackedResponse(b"# Article", {"Content-Length": "9"})
 
-    monkeypatch.setattr(api._OPENER, "open", open_url)
+    monkeypatch.setattr(api, "_open", open_url)
     monkeypatch.setattr(api, "MAX_BYTES", 9)
     assert api._download("https://example.test/article.md", "text/markdown") == b"# Article"
     assert reads >= 1
-    monkeypatch.setattr(api._OPENER, "open", lambda *_args, **_kwargs: TrackedResponse(b"# Article"))
+    monkeypatch.setattr(api, "_open", lambda *_args, **_kwargs: TrackedResponse(b"# Article"))
     assert api._download("https://example.test/article.md", "text/markdown") == b"# Article"
 
     reads = 0
     monkeypatch.setattr(api, "MAX_BYTES", 8)
-    monkeypatch.setattr(api._OPENER, "open", open_url)
+    monkeypatch.setattr(api, "_open", open_url)
     with pytest.raises(api.FmindError, match="more than 8 bytes"):
         api._download("https://example.test/article.md", "text/markdown")
     assert reads == 0, "oversized Content-Length is rejected before reading the body"
-    monkeypatch.setattr(api._OPENER, "open", lambda *_args, **_kwargs: TrackedResponse(b"# Article"))
+    monkeypatch.setattr(api, "_open", lambda *_args, **_kwargs: TrackedResponse(b"# Article"))
     with pytest.raises(api.FmindError, match="more than 8 bytes"):
         api._download("https://example.test/article.md", "text/markdown")
 
 
-def test_redirects_allow_safe_targets_close_rejected_and_skip_body_drain() -> None:
+def test_open_delegates_to_opener_director(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, float | None]] = []
+
+    def fake_open(_self: object, req: urllib.request.Request, timeout: float | None = None) -> _Response:
+        seen.append((req.full_url, timeout))
+        return _Response(b"ok")
+
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", fake_open)
+    with api._open(urllib.request.Request("https://example.test/api/profile"), timeout=5.0) as response:
+        assert response.read() == b"ok"
+    assert seen == [("https://example.test/api/profile", 5.0)]
+
+
+def test_redirects_allow_safe_targets_strip_auth_close_rejected_and_skip_body_drain() -> None:
     handler = api._RedirectHandler()
     headers = http.client.HTTPMessage()
-    origin = urllib.request.Request("https://example.test/api/profile")
+    origin = urllib.request.Request(
+        "https://example.test/api/profile",
+        headers={
+            "Authorization": "Bearer secret",
+            "Proxy-Authorization": "Basic secret",
+            "Cookie": "session=secret",
+            "Accept": "application/json",
+        },
+    )
     redirected = handler.redirect_request(
         origin, _Response(b""), 302, "Found", headers, "https://www.example.test/profile"
     )
     assert redirected is not None
     assert redirected.full_url == "https://www.example.test/profile"
+    lower_headers = {k.lower() for k in (*redirected.headers, *redirected.unredirected_hdrs)}
+    assert not (lower_headers & {"authorization", "proxy-authorization", "cookie"})
+    assert redirected.get_header("Accept") == "application/json"
 
     http_origin = urllib.request.Request("http://127.0.0.1:8080/api/profile")
     assert handler.redirect_request(http_origin, _Response(b""), 302, "Found", headers, "http://127.0.0.1:8080/v2")
@@ -315,13 +347,15 @@ def test_redirects_allow_safe_targets_close_rejected_and_skip_body_drain() -> No
         def read(self, _size: int | None = -1, /) -> bytes:
             raise AssertionError("redirect body must not be drained into memory")
 
-    class _Parent:
-        def open(self, req: urllib.request.Request, timeout: float | None = None) -> _Response:
-            assert req.full_url == "https://www.example.test/profile"
-            assert timeout == 15.0
-            return _Response(b"ok")
+    parent = create_autospec(urllib.request.OpenerDirector, instance=True, spec_set=True)
 
-    handler.add_parent(_Parent())  # ty: ignore[invalid-argument-type]
+    def parent_open(req: urllib.request.Request, timeout: float | None = None) -> _Response:
+        assert req.full_url == "https://www.example.test/profile"
+        assert timeout == 15.0
+        return _Response(b"ok")
+
+    parent.open.side_effect = parent_open
+    handler.add_parent(parent)
     origin.timeout = 15.0
     redirect_headers = http.client.HTTPMessage()
     redirect_headers["Location"] = "https://www.example.test/profile"
@@ -348,7 +382,7 @@ def test_transport_errors_are_safe_keep_the_cause_and_close_http_error(
     def fail(*_args: object, **_kwargs: object) -> bytes:
         raise error
 
-    monkeypatch.setattr(api._OPENER, "open", fail)
+    monkeypatch.setattr(api, "_open", fail)
     with pytest.raises(api.FmindError) as caught:
         api._download("https://example.test/api/profile")
     assert caught.value.__cause__ is error
@@ -362,12 +396,15 @@ def test_transport_errors_are_safe_keep_the_cause_and_close_http_error(
 @pytest.mark.parametrize("length", ["4", "20", "invalid", "-1"])
 def test_transport_rejects_incomplete_documents(monkeypatch: pytest.MonkeyPatch, length: str) -> None:
     response = _Response(b"# Partial", {"Content-Length": length})
-    monkeypatch.setattr(api._OPENER, "open", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(api, "_open", lambda *_args, **_kwargs: response)
     with pytest.raises(api.FmindError, match="could not read the website"):
         api.load_article("example")
 
 
-@pytest.mark.parametrize("control", ["\x1b[2J", "\x1b]52;c;payload\x07", "\x9b2J", "\x00", "a\rb", "end\r"])
+@pytest.mark.parametrize(
+    "control",
+    ["\x1b[2J", "\x1b]52;c;payload\x07", "\x9b2J", "\x00", "a\rb", "end\r", "\u202e", "\u2066", "\u061c"],
+)
 def test_rejects_terminal_controls_and_bare_cr(document: dict[str, Any], control: str) -> None:
     document["metadata"]["name"] = f"Example {control}"
     with pytest.raises(api.FmindError, match="terminal control characters"):
@@ -427,8 +464,16 @@ def test_total_deadline_bounds_blocking_io(monkeypatch: pytest.MonkeyPatch, bloc
             release.wait(5)
         return Response(b"# Article")
 
-    monkeypatch.setattr(api._OPENER, "open", open_url)
-    monkeypatch.setattr(api, "TIMEOUT_SECONDS", 0.2)
+    real_thread = threading.Thread
+
+    class _SyncThread(real_thread):
+        def start(self) -> None:
+            super().start()
+            assert entered.wait(5), "the worker must reach the blocked I/O phase"
+
+    monkeypatch.setattr(api, "_open", open_url)
+    monkeypatch.setattr(api.threading, "Thread", _SyncThread)
+    monkeypatch.setattr(api, "TIMEOUT_SECONDS", 0.05)
     try:
         with pytest.raises(api.FmindError, match="timed out"):
             api._download("https://example.test/article.md")
@@ -449,7 +494,7 @@ def test_worker_stops_a_progressing_body_at_deadline(monkeypatch: pytest.MonkeyP
             return super().read1(1)
 
     response = Response(b"a slowly progressing response")
-    monkeypatch.setattr(api._OPENER, "open", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(api, "_open", lambda *_args, **_kwargs: response)
     monkeypatch.setattr(api.time, "monotonic", lambda: now)
     with pytest.raises(api.FmindError, match="timed out") as caught:
         api._fetch("https://example.test/article.md", "text/markdown", 1.0)

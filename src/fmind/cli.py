@@ -1,20 +1,17 @@
 """Command surface, mirroring the sections of www.fmind.dev."""
 
-import contextlib
-import json
 import os
-import shlex
-import signal
 import sys
-from collections.abc import Sequence
-from pathlib import Path
-from typing import Annotated, Any
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Annotated
 
 import typer
-from rich.console import Console, RenderableType
+from rich.pager import Pager
 
-from fmind import __version__, articles, news, render
-from fmind.api import CONTROL_PATTERN, FmindError, load_article, load_news, load_profile
+if TYPE_CHECKING:
+    from rich.console import Console, RenderableType
+
+    from fmind.api import Profile, ProjectsPayload
 
 app = typer.Typer(
     name="fmind",
@@ -26,7 +23,7 @@ app = typer.Typer(
     "Examples: fmind articles --json | jq '.[0].slug'  •  fmind news agent",
     context_settings={"help_option_names": ["-h", "--help"]},
     add_completion=False,
-    rich_markup_mode="rich",
+    rich_markup_mode=None,
     pretty_exceptions_enable=False,
 )
 
@@ -37,6 +34,8 @@ LimitOption = Annotated[int, typer.Option("--limit", min=1, max=200, help="How m
 
 def _version(value: bool) -> None:
     if value:
+        from fmind import __version__
+
         typer.echo(f"fmind {__version__}")
         raise typer.Exit
 
@@ -59,28 +58,36 @@ def main(
 
 def _fail(message: str) -> typer.Exit:
     """Report a clear one-line error on stderr and end the command."""
+    from fmind.api import CONTROL_PATTERN
+
     message = CONTROL_PATTERN.sub(lambda match: ascii(match.group())[1:-1], message)
     message = message.encode("utf-8", errors="backslashreplace").decode("utf-8")
     typer.echo(f"fmind: {' '.join(message.split())}", err=True)
     return typer.Exit(code=1)
 
 
-def _doc() -> dict[str, Any]:
+def _doc() -> Profile:
     """Load the profile, reporting a clear error instead of a traceback."""
+    from fmind.api import FmindError, load_profile
+
     try:
         return load_profile()
     except FmindError as error:
         raise _fail(str(error)) from error
 
 
-class _SystemPager:
+class _SystemPager(Pager):
     """Page through the user's pager with colour, quitting at once when the text fits one screen."""
 
     def __init__(self, command: Sequence[str]) -> None:
         self.command = list(command)
 
     def show(self, content: str) -> None:
+        import contextlib
+        import signal
         import subprocess
+
+        from fmind.api import FmindError
 
         # Like Git: respect an explicit LESS, otherwise keep colours (-R), skip
         # paging for short output (-F), and leave the text on screen (-X).
@@ -129,7 +136,9 @@ def _full_screen_terminal() -> bool:
 
 def _pager_command() -> list[str] | None:
     """Return the pager for an interactive terminal, or None to print directly."""
+    import shlex
     import shutil
+    from pathlib import Path
 
     if not (sys.stdin.isatty() and sys.stdout.isatty() and _full_screen_terminal()):
         return None
@@ -143,6 +152,8 @@ def _pager_command() -> list[str] | None:
 
 
 def _console(ctx: typer.Context) -> Console:
+    from fmind import render
+
     return render.console(color=ctx.find_root().params["color"])
 
 
@@ -152,24 +163,38 @@ def _write(text: str) -> None:
     sys.stdout.flush()
 
 
-def _emit(ctx: typer.Context, body: RenderableType, payload: object, *, as_json: bool, page: bool = False) -> None:
+def _emit(
+    ctx: typer.Context,
+    body: Callable[[], RenderableType],
+    payload: object,
+    *,
+    as_json: bool,
+    page: bool = False,
+) -> None:
     """Print either the rendered section or its JSON data."""
     if as_json or ctx.find_root().params["as_json"]:
+        import json
+
+        from fmind.api import CONTROL_PATTERN
+
         # json.dumps escapes C0 controls but not DEL or C1 (such as CSI); fields the
         # renderer does not validate still reach the terminal, so escape those too.
         text = json.dumps(payload, ensure_ascii=False, indent=2)
         _write(CONTROL_PATTERN.sub(lambda match: f"\\u{ord(match.group()):04x}", text) + "\n")
         return
+    from fmind import render
+    from fmind.api import FmindError
+
     out = _console(ctx)
     # Trim on terminals too: forced colour (--color, FORCE_COLOR) makes Rich treat a
     # pipe or file as a terminal, and line-end padding is invisible on a real one.
-    trimmed = render.Trimmed(body)
+    trimmed = render.Trimmed(body())
     command = _pager_command() if page and out.is_terminal else None
     if command is None:
         out.print(trimmed, crop=False)
         return
     try:
-        with out.pager(pager=_SystemPager(command), styles=True):  # ty: ignore[invalid-argument-type]
+        with out.pager(pager=_SystemPager(command), styles=out.color_system is not None):
             out.print(trimmed, crop=False)
     except FmindError as error:
         raise _fail(str(error)) from error
@@ -181,31 +206,37 @@ def whoami(ctx: typer.Context, as_json: JsonOption = False) -> None:
     doc = _doc()
     _emit(
         ctx,
-        render.whoami(doc),
+        lambda: _render().whoami(doc),
         {"metadata": doc["metadata"], "experience": doc["experience"][:1], "services": doc["services"]},
         as_json=as_json,
     )
+
+
+def _render():
+    from fmind import render
+
+    return render
 
 
 @app.command()
 def about(ctx: typer.Context, as_json: JsonOption = False) -> None:
     """The biography, as published on the site."""
     doc = _doc()
-    _emit(ctx, render.about(doc), doc["biography"], as_json=as_json)
+    _emit(ctx, lambda: _render().about(doc), doc["biography"], as_json=as_json)
 
 
 @app.command()
 def skills(ctx: typer.Context, as_json: JsonOption = False) -> None:
     """Core expertise, as published on the site."""
     doc = _doc()
-    _emit(ctx, render.skills(doc), doc["expertise"], as_json=as_json)
+    _emit(ctx, lambda: _render().skills(doc), doc["expertise"], as_json=as_json)
 
 
 @app.command()
 def experiences(ctx: typer.Context, as_json: JsonOption = False) -> None:
     """Engagements in the order published by the website."""
     doc = _doc()
-    _emit(ctx, render.experiences(doc), doc["experience"], as_json=as_json)
+    _emit(ctx, lambda: _render().experiences(doc), doc["experience"], as_json=as_json)
 
 
 @app.command()
@@ -216,7 +247,7 @@ def certifications(ctx: typer.Context, as_json: JsonOption = False) -> None:
     # spells it; `--json` and jq narrow the list better than a flag could.
     _emit(
         ctx,
-        render.certifications(doc),
+        lambda: _render().certifications(doc),
         {"certifications": doc["certifications"], "thesis": doc["thesis"], "specializations": doc["specializations"]},
         as_json=as_json,
     )
@@ -226,29 +257,32 @@ def certifications(ctx: typer.Context, as_json: JsonOption = False) -> None:
 def community(ctx: typer.Context, as_json: JsonOption = False) -> None:
     """Ambassador and advisory roles."""
     doc = _doc()
-    _emit(ctx, render.community(doc), doc["leadership"], as_json=as_json)
+    _emit(ctx, lambda: _render().community(doc), doc["leadership"], as_json=as_json)
 
 
 @app.command()
 def papers(ctx: typer.Context, as_json: JsonOption = False) -> None:
     """The doctorate and the peer-reviewed publications, with their code."""
     doc = _doc()
-    _emit(ctx, render.papers(doc), {"thesis": doc["thesis"], "papers": doc["papers"]}, as_json=as_json)
+    _emit(ctx, lambda: _render().papers(doc), {"thesis": doc["thesis"], "papers": doc["papers"]}, as_json=as_json)
 
 
 @app.command()
 def projects(ctx: typer.Context, limit: LimitOption = 6, as_json: JsonOption = False) -> None:
     """Open-source repositories and video series; --limit bounds each list."""
     doc = _doc()
-    payload = {"open_source": doc["open_source"][:limit], "youtube_series": doc["youtube_series"][:limit]}
-    _emit(ctx, render.projects(payload), payload, as_json=as_json)
+    payload: ProjectsPayload = {
+        "open_source": doc["open_source"][:limit],
+        "youtube_series": doc["youtube_series"][:limit],
+    }
+    _emit(ctx, lambda: _render().projects(payload), payload, as_json=as_json)
 
 
 @app.command()
 def sites(ctx: typer.Context, as_json: JsonOption = False) -> None:
     """Interactive tools published alongside the writing."""
     doc = _doc()
-    _emit(ctx, render.sites(doc), doc["site_pages"], as_json=as_json)
+    _emit(ctx, lambda: _render().sites(doc), doc["site_pages"], as_json=as_json)
 
 
 # Named for the command it is, not for the function: `articles` is the selection
@@ -256,10 +290,12 @@ def sites(ctx: typer.Context, as_json: JsonOption = False) -> None:
 @app.command("articles")
 def list_articles(ctx: typer.Context, limit: LimitOption = 6, as_json: JsonOption = False) -> None:
     """The most recent writing."""
+    from fmind import articles
+
     doc = _doc()
     posts = articles.latest(doc["articles"], limit=limit)
     footer = f"{len(doc['articles'])} published · {doc['metadata']['site_url'].rstrip('/')}/articles/"
-    _emit(ctx, render.articles(posts, footer=footer), posts, as_json=as_json)
+    _emit(ctx, lambda: _render().articles(posts, footer=footer), posts, as_json=as_json)
 
 
 @app.command()
@@ -275,6 +311,8 @@ def search(
     as_json: JsonOption = False,
 ) -> None:
     """Find articles by term, newest match first."""
+    from fmind import articles
+
     doc = _doc()
     if tag is not None:
         names = [entry["name"] for entry in doc["tags"]]
@@ -282,7 +320,7 @@ def search(
             raise _fail(f"unknown tag {tag!r}; choose one of: {', '.join(names)}")
     found = articles.search(doc["articles"], " ".join(query or []), tag=tag, limit=limit)
     footer = f"{len(found)} shown · {len(doc['articles'])} published · fmind read <slug> opens one"
-    _emit(ctx, render.articles(found, footer=footer), found, as_json=as_json)
+    _emit(ctx, lambda: _render().articles(found, footer=footer), found, as_json=as_json)
 
 
 @app.command()
@@ -293,6 +331,11 @@ def read(
     as_json: JsonOption = False,
 ) -> None:
     """Read one article in the terminal, from its published Markdown. Pages via $PAGER (default less, LESS=FRX)."""
+    import shlex
+
+    from fmind import articles
+    from fmind.api import FmindError, load_article
+
     wanted = slug.strip().lower()
     if not wanted:
         raise typer.BadParameter("slug must not be empty", param_hint="SLUG")
@@ -318,14 +361,14 @@ def read(
         return
     # The fetched article wins over any same-named field in the index entry.
     payload = {**(post or {}), "slug": resolved, "markdown": markdown}
-    _emit(ctx, render.article_body(markdown), payload, as_json=as_json, page=True)
+    _emit(ctx, lambda: _render().article_body(markdown), payload, as_json=as_json, page=True)
 
 
 @app.command("tags")
 def list_tags(ctx: typer.Context, as_json: JsonOption = False) -> None:
     """The article tags that search --tag accepts."""
     doc = _doc()
-    _emit(ctx, render.tags(doc), doc["tags"], as_json=as_json)
+    _emit(ctx, lambda: _render().tags(doc), doc["tags"], as_json=as_json)
 
 
 @app.command("news")
@@ -342,6 +385,9 @@ def list_news(
     as_json: JsonOption = False,
 ) -> None:
     """Daily curated links, newest edition first; terms keep only matching links."""
+    from fmind import news
+    from fmind.api import FmindError, load_news
+
     try:
         archive = load_news()
     except FmindError as error:
@@ -351,14 +397,14 @@ def list_news(
     count = limit if limit is not None else (10 if terms.strip() else 1)
     found = news.search(archive["editions"], terms, limit=count)
     footer = f"{len(found)} shown · {len(archive['editions'])} editions · {archive['url']}"
-    _emit(ctx, render.news(found, footer=footer), found, as_json=as_json)
+    _emit(ctx, lambda: _render().news(found, footer=footer), found, as_json=as_json)
 
 
 @app.command()
 def hire(ctx: typer.Context, as_json: JsonOption = False) -> None:
     """What can be booked right now."""
     doc = _doc()
-    _emit(ctx, render.hire(doc), doc["services"], as_json=as_json)
+    _emit(ctx, lambda: _render().hire(doc), doc["services"], as_json=as_json)
 
 
 @app.command()
@@ -366,12 +412,21 @@ def mcp(ctx: typer.Context) -> None:
     """Serve the website's MCP tools, resources, and prompts over protocol-only stdio (uses FMIND_PROFILE_URL)."""
     import asyncio
 
+    from fmind.api import FmindError
+
     if ctx.find_root().params["as_json"]:
         raise typer.BadParameter("mcp uses protocol-only stdio; --json applies to portfolio commands")
     try:
         from fmind.mcp import serve
     except ImportError as error:
-        raise _fail("MCP support is not installed; run: uv tool install --upgrade 'fmind[mcp]'") from error
+        root = error.name.split(".", 1)[0] if isinstance(error, ModuleNotFoundError) and error.name else ""
+        if isinstance(error, ModuleNotFoundError) and (
+            error.name == "fmind.mcp" or root in {"httpx2", "mcp", "mcp_types"}
+        ):
+            raise _fail("MCP support is not installed; run: uv tool install --upgrade 'fmind[mcp]'") from error
+        raise _fail(
+            "MCP support could not be loaded; reinstall with: uv tool install --upgrade 'fmind[mcp]'"
+        ) from error
     try:
         asyncio.run(serve())
     except FmindError as error:

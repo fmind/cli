@@ -1,6 +1,7 @@
 """Bridge the website's read-only MCP surface from Streamable HTTP to stdio."""
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -15,7 +16,7 @@ from mcp.server.stdio import stdio_server
 from mcp.shared.exceptions import MCPError
 
 from fmind import __version__
-from fmind.api import MAX_BYTES, TIMEOUT_SECONDS, USER_AGENT, FmindError, origin_url
+from fmind.api import MAX_BYTES, TIMEOUT_SECONDS, FmindError, origin_url, user_agent
 
 
 class _ResponseError(httpx2.StreamError):
@@ -63,7 +64,7 @@ class _BoundedTransport(httpx2.AsyncHTTPTransport):
             return httpx2.Response(504, request=request)
         except httpx2.TransportError:
             return httpx2.Response(502, request=request)
-        if response.headers.get("content-encoding", "identity") != "identity":
+        if response.headers.get("content-encoding", "identity").strip().lower() != "identity":
             # The client asks for identity, so a compressed body is a broken upstream.
             await response.aclose()
             return httpx2.Response(502, request=request)
@@ -117,19 +118,24 @@ async def serve() -> None:
     logging.getLogger("mcp").setLevel(logging.CRITICAL)
     connected = False
     try:
-        async with (
-            httpx2.AsyncClient(
-                transport=_BoundedTransport(),
-                timeout=TIMEOUT_SECONDS,
-                headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache", "Accept-Encoding": "identity"},
-            ) as http,
-            Client(
-                streamable_http_client(endpoint, http_client=http),
-                read_timeout_seconds=TIMEOUT_SECONDS,
-                cache=None,
-            ) as remote,
-            stdio_server() as (reader, writer),
-        ):
+        async with contextlib.AsyncExitStack() as stack:
+            http = await stack.enter_async_context(
+                httpx2.AsyncClient(
+                    transport=_BoundedTransport(),
+                    timeout=TIMEOUT_SECONDS,
+                    max_redirects=3,
+                    headers={"User-Agent": user_agent(), "Cache-Control": "no-cache", "Accept-Encoding": "identity"},
+                )
+            )
+            async with asyncio.timeout(TIMEOUT_SECONDS):
+                remote = await stack.enter_async_context(
+                    Client(
+                        streamable_http_client(endpoint, http_client=http),
+                        read_timeout_seconds=TIMEOUT_SECONDS,
+                        cache=None,
+                    )
+                )
+            reader, writer = await stack.enter_async_context(stdio_server())
             server = create_bridge(remote)
             connected = True
             await server.run(reader, writer, server.create_initialization_options())

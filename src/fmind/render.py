@@ -1,14 +1,19 @@
 """Render sections of the portfolio document as terminal output."""
 
 import errno
-from collections.abc import Iterable, Mapping, Sequence
-from typing import Any
+import os
+from collections import Counter
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING
 
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.segment import Segment
 from rich.style import Style
 from rich.table import Table
 from rich.text import Text
+
+if TYPE_CHECKING:
+    from fmind.api import Article, NewsEdition, Profile, ProjectsPayload
 
 # Use the terminal palette so its light/dark theme owns colour contrast.
 ACCENT = "bold blue"
@@ -24,9 +29,12 @@ class _Console(Console):
 
 def console(*, color: bool | None = None) -> Console:
     """Detect terminal colour and NO_COLOR unless explicitly overridden."""
+    # Rich's `no_color=True` only strips colours while still emitting SGR attributes
+    # and OSC 8 links on TTYs or under FORCE_COLOR; disabling color_system suppresses all ANSI.
+    suppress = color is False or (color is None and bool(os.environ.get("NO_COLOR")))
     return _Console(
         force_terminal=True if color is True else None,
-        color_system="truecolor" if color is True else "auto",
+        color_system="truecolor" if color is True else (None if suppress else "auto"),
         no_color=None if color is None else not color,
         highlight=False,
         markup=False,
@@ -57,8 +65,9 @@ def _rstrip(line: list[Segment]) -> Iterable[Segment]:
 
 def _link(url: str) -> Text:
     """A published URL on one logical line: folding it would break copying and clicking."""
-    # Terminals that support OSC 8 make it clickable; the text stays the literal URL.
-    safe = url.startswith(("https://", "http://", "mailto:")) and not any(ch.isspace() for ch in url)
+    # Terminals that support OSC 8 make it clickable; fail closed at the sink to
+    # printable non-whitespace ASCII per OSC 8 / RFC 3986.
+    safe = url.startswith(("https://", "http://", "mailto:")) and all(0x21 <= ord(ch) <= 0x7E for ch in url)
     style = Style(underline=True, link=url) if safe else "underline"
     return Text(url, style=style, no_wrap=True, overflow="ignore")
 
@@ -83,15 +92,15 @@ def _rows(pairs: Sequence[tuple[str, RenderableType]]) -> Table:
     return table
 
 
-def whoami(doc: Mapping[str, Any]) -> RenderableType:
+def whoami(doc: Profile) -> RenderableType:
     """Identity, location, featured experience, availability, contact, and social profiles."""
     meta = doc["metadata"]
-    experience = doc.get("experience") or []
+    experience = doc["experience"]
     mission = Text("—")
     if experience:
         featured = experience[0]
         mission = Text(f"{featured['company']} — {featured['title']}")
-    services = doc.get("services") or []
+    services = doc["services"]
     status = Text()
     for index, service in enumerate(services):
         if index:
@@ -122,7 +131,7 @@ def whoami(doc: Mapping[str, Any]) -> RenderableType:
     )
 
 
-def about(doc: Mapping[str, Any]) -> RenderableType:
+def about(doc: Profile) -> RenderableType:
     """The biography paragraphs."""
     from rich.markdown import Markdown
 
@@ -130,13 +139,13 @@ def about(doc: Mapping[str, Any]) -> RenderableType:
     return _listing(blocks, "no biography published")
 
 
-def skills(doc: Mapping[str, Any]) -> RenderableType:
+def skills(doc: Profile) -> RenderableType:
     """Show expertise without inventing command-line options or local labels."""
     blocks = [_entry(Text(card["title"], style="bold"), Text(card["description"])) for card in doc["expertise"]]
     return _listing(blocks, "no expertise published")
 
 
-def experiences(doc: Mapping[str, Any]) -> RenderableType:
+def experiences(doc: Profile) -> RenderableType:
     """Engagements in the order published by the website."""
     blocks = [
         _entry(
@@ -150,7 +159,7 @@ def experiences(doc: Mapping[str, Any]) -> RenderableType:
     return _listing(blocks, "no experience published")
 
 
-def community(doc: Mapping[str, Any]) -> RenderableType:
+def community(doc: Profile) -> RenderableType:
     """Ambassador and advisory roles, with their published links."""
     blocks = [
         _entry(
@@ -164,7 +173,7 @@ def community(doc: Mapping[str, Any]) -> RenderableType:
     return _listing(blocks, "no community role published")
 
 
-def certifications(doc: Mapping[str, Any]) -> RenderableType:
+def certifications(doc: Profile) -> RenderableType:
     """Credentials, doctorate, and specializations with published evidence."""
     blocks: list[RenderableType] = []
     for badge in doc["certifications"]:
@@ -185,7 +194,7 @@ def certifications(doc: Mapping[str, Any]) -> RenderableType:
     return Group(*blocks)
 
 
-def projects(doc: Mapping[str, Any]) -> RenderableType:
+def projects(doc: ProjectsPayload) -> RenderableType:
     """Open-source repositories, then video series."""
     blocks: list[RenderableType] = []
     for project in doc["open_source"]:
@@ -209,7 +218,7 @@ def projects(doc: Mapping[str, Any]) -> RenderableType:
     return _listing(blocks, "no project published")
 
 
-def articles(posts: Sequence[Mapping[str, Any]], *, footer: str = "") -> RenderableType:
+def articles(posts: Sequence[Article], *, footer: str = "") -> RenderableType:
     """A list of articles, one block each, with `fmind read` slugs kept visible."""
     blocks: list[RenderableType] = []
     for post in posts:
@@ -224,20 +233,20 @@ def articles(posts: Sequence[Mapping[str, Any]], *, footer: str = "") -> Rendera
     return Group(*blocks, Text(footer)) if footer else Group(*blocks)
 
 
-def tags(doc: Mapping[str, Any]) -> RenderableType:
+def tags(doc: Profile) -> RenderableType:
     """The site's article tags, each with its article count and the search that lists them."""
+    # Case-insensitive, like `fmind search --tag`, computed in one pass.
+    counts = Counter(name for post in doc["articles"] for name in {t.lower() for t in post["tags"]})
     blocks: list[RenderableType] = []
     for tag in doc["tags"]:
-        # Case-insensitive, like `fmind search --tag`.
-        name = tag["name"].lower()
-        count = sum(name in {t.lower() for t in post["tags"]} for post in doc["articles"])
+        count = counts[tag["name"].lower()]
         hint = Text(f"{count} article{'' if count == 1 else 's'} · fmind search --tag ")
         hint.append(tag["name"], style="bold")
         blocks.append(_entry(Text(tag["name"], style=ACCENT), Text(tag["description"]), hint))
     return _listing(blocks, "no tag published")
 
 
-def news(editions: Sequence[Mapping[str, Any]], *, footer: str = "") -> RenderableType:
+def news(editions: Sequence[NewsEdition], *, footer: str = "") -> RenderableType:
     """Daily news editions, each with its curated links."""
     blocks: list[RenderableType] = []
     for edition in editions:
@@ -262,7 +271,7 @@ def article_body(markdown: str) -> RenderableType:
     return Markdown(markdown, code_theme="ansi_light", hyperlinks=False)
 
 
-def papers(doc: Mapping[str, Any]) -> RenderableType:
+def papers(doc: Profile) -> RenderableType:
     """The doctorate and the peer-reviewed record behind it."""
     thesis = doc["thesis"]
     thesis_lines: list[RenderableType] = [
@@ -288,7 +297,7 @@ def papers(doc: Mapping[str, Any]) -> RenderableType:
     return Group(*parts)
 
 
-def sites(doc: Mapping[str, Any]) -> RenderableType:
+def sites(doc: Profile) -> RenderableType:
     """Interactive tools published alongside the writing."""
     blocks = [
         _entry(
@@ -302,7 +311,7 @@ def sites(doc: Mapping[str, Any]) -> RenderableType:
     return _listing(blocks, "no interactive site published")
 
 
-def hire(doc: Mapping[str, Any]) -> RenderableType:
+def hire(doc: Profile) -> RenderableType:
     """What can be booked right now."""
     blocks = [
         _entry(

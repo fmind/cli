@@ -1,9 +1,10 @@
 """Select articles from the profile document: newest, matching, or named."""
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING
 
-type Article = dict[str, Any]
+if TYPE_CHECKING:
+    from fmind.api import Article
 
 
 def latest(articles: Sequence[Article], *, limit: int) -> list[Article]:

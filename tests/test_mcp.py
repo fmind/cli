@@ -188,7 +188,7 @@ def test_response_bound(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("encoding", ["identity", "gzip"])
+@pytest.mark.parametrize("encoding", ["identity", " IDENTITY ", "gzip"])
 def test_http_transport_bound(monkeypatch: pytest.MonkeyPatch, encoding: str) -> None:
     async def run() -> None:
         class Chunks(httpx2.AsyncByteStream):
@@ -200,7 +200,7 @@ def test_http_transport_bound(monkeypatch: pytest.MonkeyPatch, encoding: str) ->
         monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=response))
         monkeypatch.setattr(mcp, "MAX_BYTES", 5)
         async with httpx2.AsyncClient(transport=mcp._BoundedTransport()) as client:
-            if encoding == "identity":
+            if encoding.strip().lower() == "identity":
                 with pytest.raises(httpx2.StreamError, match="size limit"):
                     await client.get("https://example.test/mcp")
             else:
@@ -426,12 +426,54 @@ def test_failure_after_connecting_does_not_blame_the_remote(monkeypatch: pytest.
     assert result.stderr == "fmind: the MCP bridge stopped unexpectedly after connecting\n"
 
 
+def test_startup_handshake_is_bounded_and_caps_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen_max_redirects: list[int] = []
+    real_client = httpx2.AsyncClient
+
+    def capture_http(*args: object, **kwargs: object) -> httpx2.AsyncClient:
+        seen_max_redirects.append(int(kwargs["max_redirects"]))  # ty: ignore[invalid-argument-type]
+        return real_client(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    @asynccontextmanager
+    async def stalled_client(*_args: object, **_kwargs: object) -> AsyncGenerator[None]:
+        await asyncio.Event().wait()
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(mcp.httpx2, "AsyncClient", capture_http)
+    monkeypatch.setattr(mcp, "Client", stalled_client)
+    monkeypatch.setattr(mcp, "TIMEOUT_SECONDS", 0.03)
+    result = CliRunner().invoke(app, ["mcp"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "could not connect to the remote MCP server" in result.stderr
+    assert seen_max_redirects == [3]
+
+
 def test_missing_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "fmind.mcp", None)
     result = CliRunner().invoke(app, ["mcp"])
     assert result.exit_code == 1
-    assert "uv tool install --upgrade 'fmind[mcp]'" in result.stderr
+    assert "MCP support is not installed; run: uv tool install --upgrade 'fmind[mcp]'" in result.stderr
     assert not result.stdout
+
+    monkeypatch.delitem(sys.modules, "fmind.mcp")
+    monkeypatch.setitem(sys.modules, "httpx2", None)
+    missing_dep = CliRunner().invoke(app, ["mcp"])
+    assert missing_dep.exit_code == 1
+    assert "MCP support is not installed; run: uv tool install --upgrade 'fmind[mcp]'" in missing_dep.stderr
+
+    real_import = __import__
+
+    def broken_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "fmind.mcp":
+            raise ImportError("corrupted binary symbol")
+        return real_import(name, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr("builtins.__import__", broken_import)
+    broken = CliRunner().invoke(app, ["mcp"])
+    assert broken.exit_code == 1
+    assert "MCP support could not be loaded; reinstall with: uv tool install --upgrade 'fmind[mcp]'" in broken.stderr
+    assert not broken.stdout
 
 
 def test_json_is_rejected() -> None:

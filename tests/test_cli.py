@@ -233,15 +233,7 @@ def test_read_raw_emits_the_markdown_source() -> None:
     assert result.stdout.startswith("# Newer")
 
 
-def test_read_reports_an_unknown_slug() -> None:
-    result = runner.invoke(app, ["read", "does-not-exist"])
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert "fmind search" in result.stderr
-    assert "Traceback" not in result.stderr
-
-
-@pytest.mark.parametrize("slug", ["\x1b]52;c;ZXhhbXBsZQ==\x07", "\x9b2J", "\x00", "\ud800"])
+@pytest.mark.parametrize("slug", ["\x1b]52;c;ZXhhbXBsZQ==\x07", "\x9b2J", "\x00", "\ud800", "\u202e"])
 def test_unknown_slug_errors_escape_unsafe_characters(slug: str) -> None:
     result = runner.invoke(app, ["read", slug])
     assert result.exit_code == 1
@@ -445,11 +437,11 @@ def test_json_output_is_machine_readable(section: str, position: str) -> None:
 
 
 def test_json_escapes_controls_in_unvalidated_fields(document: dict[str, Any]) -> None:
-    document["metadata"]["future"] = "x\x9b2J\x7f"
+    document["metadata"]["future"] = "x\x9b2J\x7f\u202e"
     result = runner.invoke(app, ["whoami", "--json"])
     assert result.exit_code == 0, result.output
     assert not api.CONTROL_PATTERN.search(result.stdout)
-    assert json.loads(result.stdout)["metadata"]["future"] == "x\x9b2J\x7f"
+    assert json.loads(result.stdout)["metadata"]["future"] == "x\x9b2J\x7f\u202e"
 
 
 @pytest.mark.parametrize("args", [["--json", "read", "newer"], ["--json", "read", "newer", "--raw"]])
@@ -505,7 +497,7 @@ def test_entrypoint_exits_cleanly_on_usage_interrupt_and_failure(
     assert usage.value.code == 2
     assert capsys.readouterr().err
 
-    monkeypatch.setattr(cli, "load_profile", lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(api, "load_profile", lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
     with pytest.raises(SystemExit) as interrupted:
         app(["whoami"], standalone_mode=True)
     assert interrupted.value.code == 130
@@ -542,10 +534,10 @@ def test_unreachable_profile_reports_cleanly(monkeypatch: pytest.MonkeyPatch) ->
 def test_help_exposes_json_and_omits_refresh(flag: str, command: list[str]) -> None:
     result = runner.invoke(app, [*command, flag])
     assert result.exit_code == 0
-    # CI forces Rich colour, which can insert ANSI sequences inside option names.
-    visible = Text.from_ansi(result.stdout).plain
-    assert "--json" in visible
-    assert "--refresh" not in visible
+    assert "\x1b" not in result.stdout
+    assert "<bool>" not in result.stdout
+    assert "--json" in result.stdout
+    assert "--refresh" not in result.stdout
 
 
 def test_json_experiences_are_the_website_section(document: dict[str, Any]) -> None:
@@ -592,11 +584,15 @@ def test_invalid_usage_exits_without_data(command: list[str]) -> None:
 
 def test_colour_flags_control_ansi_and_never_pollute_json() -> None:
     result = runner.invoke(app, ["--no-color", "experiences"])
-    assert "\x1b[" not in result.stdout
+    assert "\x1b" not in result.stdout
+    forced_no_color = runner.invoke(app, ["--no-color", "whoami"], env={"FORCE_COLOR": "1", "TERM": "xterm-256color"})
+    assert "\x1b" not in forced_no_color.stdout
+    env_no_color = runner.invoke(app, ["whoami"], env={"FORCE_COLOR": "1", "NO_COLOR": "1", "TERM": "xterm-256color"})
+    assert "\x1b" not in env_no_color.stdout
     coloured = runner.invoke(app, ["--color", "experiences"])
     assert "\x1b[" in coloured.stdout
     json_result = runner.invoke(app, ["--color", "experiences", "--json"])
-    assert "\x1b[" not in json_result.stdout
+    assert "\x1b" not in json_result.stdout
     assert json.loads(json_result.stdout)
 
 

@@ -1,5 +1,6 @@
 """Shared fixtures: synthetic profile and news documents and an offline network boundary."""
 
+import importlib.util
 import json
 from typing import Any
 
@@ -202,9 +203,10 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     def denied(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("network access is forbidden in offline tests")
 
-    monkeypatch.setattr("fmind.api._OPENER.open", denied)
+    monkeypatch.setattr("urllib.request.OpenerDirector.open", denied)
     monkeypatch.setattr("urllib.request.urlopen", denied)
-    monkeypatch.setattr("httpx2.AsyncHTTPTransport.handle_async_request", denied)
+    if importlib.util.find_spec("httpx2") is not None:
+        monkeypatch.setattr("httpx2.AsyncHTTPTransport.handle_async_request", denied)
     for var in ("FMIND_PROFILE_URL", "COLUMNS", "NO_COLOR", "FORCE_COLOR", "PAGER", "LESS"):
         monkeypatch.delenv(var, raising=False)
 

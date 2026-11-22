@@ -1,9 +1,11 @@
 """Select daily news editions from the news archive: newest, or matching."""
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING
 
-type Edition = dict[str, Any]
+if TYPE_CHECKING:
+    from fmind.api import NewsEdition as Edition
+    from fmind.api import NewsItem
 
 
 def _edition_text(edition: Edition) -> str:
@@ -11,7 +13,7 @@ def _edition_text(edition: Edition) -> str:
     return f"{edition['slug']} {edition['title']}".lower()
 
 
-def _item_text(item: dict[str, Any]) -> str:
+def _item_text(item: NewsItem) -> str:
     """Return the searchable text of one link, lower-cased."""
     return " ".join((item["title"], item["domain"], item["description"], item["url"])).lower()
 
