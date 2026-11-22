@@ -1,25 +1,24 @@
-# AGENTS.md — cli
+# AGENTS.md
 
-Thin Python CLI (`typer` + `rich`; optional `mcp` extra) that renders live documents from `www.fmind.dev` and bridges its remote `/mcp` server over stdio. It has no database, hosted server, or local cache, and **no portfolio fact is ever written down here**—new data must be published by the website first.
+Thin Python 3.14+ CLI (`typer`, `rich`; optional `mcp` extra) rendering live data from `www.fmind.dev` and bridging its `/mcp` server over stdio. Stateless with no local cache, and **no portfolio facts live in this repo** (publish new data on the website first). See [README.md](README.md) for usage.
 
-## Delivery
+## Commands
 
-- **Pass `mise run all` before done** ([README.md](README.md#development)): `mise.toml` owns the task contract (`install` for locked `.venv` + `lefthook`, `format`, `check`, offline `test` at `>=85%` branch coverage with warnings as errors, and `build`; `all` runs `check`, `test`, and `build` without rewriting files). Pre-commit formats staged files and runs offline `check:local` (`check:actions`, `check:deps`, `check:format`, working-tree `check:leaks` via `.betterleaks.toml`, `check:lint`, `check:tasks`, `check:types`); pre-push runs `check:network` (`uv audit`) and `test`; `security.yml` runs weekly `check:leaks:full`, `check:network`, and `check:actions:online`.
-- **Keep live smoke out of merge gates**: `mise run smoke` (`tests/smoke.py`, `.github/workflows/compatibility.yml`) discovers CLI commands and live MCP catalogs/slugs—reporting API and MCP failures independently—on `main`, daily, and before release, never in offline `test` or PR CI.
-- **Release via skill**: follow [release](.agents/skills/release/SKILL.md). Hand-curate `CHANGELOG.md` without regenerating past releases; CD (`cd.yml`) reruns `ci.yml` (Python 3.15 gate, 3.14 compatibility, `--resolution lowest-direct` floors) and `smoke` on `v*` tags before attesting provenance, PyPI Trusted Publishing, and GitHub Release creation.
+- **Local gates**: `mise run install` (locked `.venv` + Lefthook), `mise run format`, `mise run check` (`check:local` + `check:network`), `mise run test` (offline, `>=85%` branch coverage, warnings as errors), `mise run build`, and `mise run all` (read-only CI gate; pass before done).
+- **Live smoke**: `mise run smoke` (`tests/smoke.py`) exercises live API, articles, and MCP; keep it out of offline `test` and PR CI.
+- **Releases**: follow [release](.agents/skills/release/SKILL.md). Hand-curate `CHANGELOG.md` without regenerating past releases.
 
 ## Invariants
 
-- **Treat upstream as sole source of truth**: fetch `https://www.fmind.dev/api/profile`, `…/api/news`, and `…/articles/<slug>.md` live on every call (`Cache-Control: no-cache`; no local cache, stale fallback, or `--refresh`). `PROFILE_SHAPE` and `NEWS_SHAPE` require only rendered keys, so newly consumed fields must be live (`mise run smoke`) before release.
-- **Derive one origin**: `FMIND_PROFILE_URL` overrides the profile endpoint; news, article reads, and `/mcp` derive their origin from it.
-- **Keep two base dependencies**: only `typer` and `rich` for portfolio commands; only `fmind.mcp` imports `mcp`/`mcp_types`/`httpx2` at module level (Ruff `TID253`). Raise lower bounds when `--resolution lowest-direct` fails.
-- **Validate untrusted inputs and responses**: match slugs against `SLUG_PATTERN`; enforce safe HTTP(S) redirects (no credentials, HTTPS downgrade, sensitive auth/cookie forwarding, or unbounded redirect body drains), close `HTTPError` responses, enforce `15s` wall-clock deadline and `8 MiB` size cap; parse strict JSON (`MAX_DEPTH = 32`, no `NaN`/`Infinity`, valid UTF-8, no `CONTROL_PATTERN`, bare `\r`, or bidi controls in rendered fields) and escape controls in errors and `--json`. Use synthetic test fixtures only.
-- **Fail in one line**: expected failures raise `FmindError` and exit `1` with `fmind: <what failed>` on stderr—never a traceback. `fmind.cli:app` exits `2` on usage errors, `130` quietly on `SIGINT`, and `1` quietly on `BrokenPipeError`.
-- **Keep commands and options stable and minimal**: plural list commands grouped by API sections; bare `fmind` runs `whoami`; `-h`/`--help` works on root and subcommands; `--limit` bounds articles, search, news (`1` default, `10` with terms), and each project list; `--json` works before or after portfolio commands (taking precedence over `read --raw`); `search --tag` validates against `fmind tags`. Preserve `experience` order without inferring current status.
-- **Flush, trim, and guard paging**: flush stdout inside commands (routing Rich `BrokenPipeError` to Typer) for quiet EPIPE exits; strip trailing whitespace even under forced colour; page `read` only when stdin/stdout are TTYs and terminfo knows `TERM` (not `dumb`).
-- **Keep text and JSON consistent**: use terminal-default body text and a single blue accent, stack entries with `render._entry` (never `Padding`, which crops long lines), and render unwrapped URLs with `render._link`. Keep grouped JSON schema docs in [README.md](README.md#piping) synced (`whoami`, `certifications`, `papers`, `projects`, `news`, plus `read` carrying `slug` and `markdown`).
-- **Forward MCP without caching**: keep stdio stdout protocol-only; forward remote tools, resources, and prompts without copying schemas or content; work with finite POST-only upstream (`405` on GET/HEAD without background streams), strip cache hints via `model_copy`, cap redirects (`max_redirects=3`), bound `15s` / `8 MiB` per exchange and startup handshake, and propagate cancellation.
+- **Single live origin**: fetch `/api/profile`, `/api/news`, and `/articles/<slug>.md` live (`Cache-Control: no-cache`, no cache or `--refresh`). `FMIND_PROFILE_URL` sets the origin for all endpoints including `/mcp`. `PROFILE_SHAPE` and `NEWS_SHAPE` check only rendered keys; newly consumed fields must be live (`mise run smoke`) before release.
+- **Minimal dependencies**: keep only `typer` and `rich` in base dependencies; only `fmind.mcp` imports `mcp`, `mcp_types`, or `httpx2` at module level (Ruff `TID253`). Raise lower bounds when `--resolution lowest-direct` fails.
+- **Strict boundary validation**: validate slugs, enforce safe redirects (no credentials, HTTPS downgrade, auth/cookie forwarding, or redirect body drains), close `HTTPError` responses, enforce `15s` / `8 MiB` limits, parse strict JSON (bounded depth, finite numbers, no control/bidi characters), and use synthetic test fixtures only.
+- **Stable CLI contract**: raise `FmindError` for one-line `fmind: ...` stderr errors (exit `1`; usage `2`, `SIGINT` `130`, `BrokenPipeError` `1` quietly; no tracebacks). Keep commands aligned with API sections (`fmind` runs `whoami`; preserve `experience` order; `--json` works before or after portfolio commands and overrides `read --raw`; keep grouped JSON schemas synced with [README.md](README.md#piping)).
+- **Clean terminal output**: flush stdout inside commands, strip trailing whitespace, page `read` only on capable TTYs, use terminal-default body text with one blue accent, avoid Rich `Padding` (crops long lines), and keep URLs unwrapped.
+- **Stateless MCP bridge**: keep stdio stdout protocol-only, forward remote tools, resources, and prompts without caching (stripping cache hints), support POST-only upstream (`405` on GET/HEAD), cap redirects (`max_redirects=3`) and exchanges/handshake (`15s` / `8 MiB`), and propagate cancellation.
 
-## Ownership
+## Layout
 
-- `src/fmind/`: `api.py` (HTTP I/O and validation), `articles.py` and `news.py` (pure selection), `render.py` (pure Rich renderables), `cli.py` (Typer commands), `mcp.py` (optional stdio-to-Streamable-HTTP bridge). Tests in `tests/` (`test_api.py`, `test_articles.py`, `test_news.py`, `test_render.py`, `test_cli.py`, `test_mcp.py`, `test_smoke.py`) target the owning layer, not the seam.
+- `src/fmind/`: `api.py` (HTTP and validation), `articles.py` & `news.py` (selection), `render.py` (Rich views), `cli.py` (Typer CLI), `mcp.py` (optional stdio bridge).
+- `tests/`: layer-scoped unit suites (`test_{api,articles,news,render,cli,mcp,smoke}.py`) and `smoke.py`.
+- `.agents/skills/release/SKILL.md`: authorized release workflow.
