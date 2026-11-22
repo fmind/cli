@@ -197,22 +197,23 @@ def news_archive() -> dict[str, Any]:
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An accidental real HTTP request fails the offline suite immediately."""
+    """Fail immediately on real HTTP requests and isolate ambient terminal environment variables."""
 
-    def denied(*args: object, **kwargs: object) -> None:
+    def denied(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("network access is forbidden in offline tests")
 
     monkeypatch.setattr("fmind.api._OPENER.open", denied)
     monkeypatch.setattr("urllib.request.urlopen", denied)
     monkeypatch.setattr("httpx2.AsyncHTTPTransport.handle_async_request", denied)
-    monkeypatch.delenv("FMIND_PROFILE_URL", raising=False)
+    for var in ("FMIND_PROFILE_URL", "COLUMNS", "NO_COLOR", "FORCE_COLOR", "PAGER", "LESS"):
+        monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture
 def offline(monkeypatch: pytest.MonkeyPatch, document: dict[str, Any], news_archive: dict[str, Any]) -> None:
     """Serve the fixture documents instead of reaching the network."""
 
-    def fake(url: str, accept: str = "application/json") -> bytes:
+    def fake(url: str, _accept: str = "application/json") -> bytes:
         if url.endswith(".md"):
             return MARKDOWN.encode()
         if url.endswith("/api/news"):

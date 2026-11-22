@@ -82,11 +82,10 @@ def create_bridge(remote: Client) -> Server[Any]:
             try:
                 async with asyncio.timeout(TIMEOUT_SECONDS):
                     result = await remote.session.send_request(types.Request(method=method, params=params), result_type)
-                # Strip upstream cache hints: every bridge request must reach the website.
-                payload = result.model_dump(by_alias=True, mode="json", exclude_none=True)
-                payload.pop("ttlMs", None)
-                payload.pop("cacheScope", None)
-                return result_type.model_validate(payload)
+                # Strip upstream cache hints without re-serializing non-cacheable results.
+                if isinstance(result, types.CacheableResult):
+                    return result.model_copy(update={"ttl_ms": 0, "cache_scope": "private"})
+                return result
             except MCPError:
                 raise
             except Exception as error:

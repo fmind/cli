@@ -6,6 +6,7 @@ import json
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import httpx2
@@ -43,9 +44,11 @@ def test_forwarding() -> None:
             assert (await client.list_tools()).tools == (await remote.list_tools()).tools
             assert (await client.list_resources()).resources == (await remote.list_resources()).resources
             assert (await client.list_prompts()).prompts == (await remote.list_prompts()).prompts
-            assert not (await client.list_resource_templates()).resource_templates
+            templates = (await client.list_resource_templates()).resource_templates
+            assert [template.uri_template for template in templates] == ["example://articles/{slug}"]
             assert _text((await client.call_tool("echo", {"value": "example"})).content[0]) == "example"
             assert _text((await client.read_resource("example://profile")).contents[0]) == "Synthetic profile"
+            assert _text((await client.read_resource("example://articles/demo")).contents[0]) == "Article demo"
             prompt = await client.get_prompt("brief", {"audience": "testers"})
             assert _text(prompt.messages[0].content) == "Brief for testers"
             assert (await client.call_tool("missing", {})).is_error
@@ -69,13 +72,16 @@ def test_forwarding() -> None:
 def test_cursor_errors_and_cache_hints(monkeypatch: pytest.MonkeyPatch) -> None:
     async def run() -> None:
         async with Client(upstream(), cache=None) as remote:
-            send = AsyncMock(return_value=types.ListToolsResult(tools=[], next_cursor="next", ttl_ms=1000))
+            send = AsyncMock(
+                return_value=types.ListToolsResult(tools=[], next_cursor="next", ttl_ms=1000, cache_scope="public")
+            )
             monkeypatch.setattr(remote.session, "send_request", send)
             async with Client(mcp.create_bridge(remote)) as client:
                 for _ in range(2):
                     result = await client.list_tools(cursor="page-two")
                     assert result.next_cursor == "next"
                     assert result.ttl_ms == 0
+                    assert result.cache_scope == "private"
                 assert send.await_count == 2
                 assert send.call_args.args[0].params.cursor == "page-two"
                 send.side_effect = MCPError(types.INVALID_PARAMS, "invalid example arguments")
@@ -89,11 +95,31 @@ def test_cursor_errors_and_cache_hints(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(run())
 
 
+def test_non_cacheable_results_pass_through_without_revalidation(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        async with Client(upstream(), cache=None) as remote:
+            explicit = types.CallToolResult(
+                content=[types.TextContent(type="text", text="ok")],
+                structured_content=None,
+            )
+            monkeypatch.setattr(remote.session, "send_request", AsyncMock(return_value=explicit))
+            bridge = mcp.create_bridge(remote)
+            entry = bridge.get_request_handler("tools/call")
+            assert entry is not None
+            returned = await entry.handler(None, types.CallToolRequestParams(name="echo", arguments={}))  # ty: ignore[invalid-argument-type]
+            assert returned is explicit
+            assert "structured_content" in returned.model_fields_set
+
+    asyncio.run(run())
+
+
 def test_timeout_and_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
     async def run() -> None:
+        started = asyncio.Event()
         stopped = asyncio.Event()
 
-        async def stall(*args: object, **kwargs: object) -> None:
+        async def stall(*_args: object, **_kwargs: object) -> None:
+            started.set()
             try:
                 await asyncio.Event().wait()
             finally:
@@ -106,10 +132,11 @@ def test_timeout_and_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
                 with pytest.raises(MCPError, match="could not read"):
                     await client.list_tools()
                 assert stopped.is_set()
+                started.clear()
                 stopped.clear()
                 monkeypatch.setattr(mcp, "TIMEOUT_SECONDS", 15)
                 task = asyncio.create_task(client.list_tools())
-                await asyncio.sleep(0.01)
+                await asyncio.wait_for(started.wait(), 1)
                 task.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await task
@@ -120,6 +147,11 @@ def test_timeout_and_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_response_bound(monkeypatch: pytest.MonkeyPatch) -> None:
     async def run() -> None:
+        class Exact(httpx2.AsyncByteStream):
+            async def __aiter__(self):
+                yield b"abc"
+                yield b"de"
+
         class Chunks(httpx2.AsyncByteStream):
             async def __aiter__(self):
                 yield b"abc"
@@ -130,8 +162,22 @@ def test_response_bound(monkeypatch: pytest.MonkeyPatch) -> None:
                 yield b"abc"
                 raise httpx2.ReadError("private diagnostic")
 
+        class Slow(httpx2.AsyncByteStream):
+            async def __aiter__(self):
+                await asyncio.sleep(0)
+                yield b"a"
+
         monkeypatch.setattr(mcp, "MAX_BYTES", 5)
         deadline = asyncio.get_running_loop().time() + 1
+        exact = mcp._BoundedStream(Exact(), deadline)
+        assert b"".join([part async for part in exact]) == b"abcde"
+        await exact.aclose()
+
+        expired = mcp._BoundedStream(Slow(), asyncio.get_running_loop().time() - 1)
+        with pytest.raises(httpx2.StreamError, match="deadline"):
+            _ = [part async for part in expired]
+        await expired.aclose()
+
         for chunks, message in ((Chunks(), "size limit"), (Reset(), "interrupted")):
             stream = mcp._BoundedStream(chunks, deadline)
             # A stream error is the one failure the SDK answers per request.
@@ -177,7 +223,7 @@ def test_http_headers_have_a_total_deadline(monkeypatch: pytest.MonkeyPatch) -> 
     async def run() -> None:
         stopped = asyncio.Event()
 
-        async def stalled(*args: object) -> None:
+        async def stalled(*_args: object) -> None:
             try:
                 await asyncio.Event().wait()
             finally:
@@ -226,7 +272,6 @@ def test_legacy_http_body_stops_after_request_timeout(monkeypatch: pytest.Monkey
             return httpx2.Response(200, headers={"content-type": "application/json"}, stream=Endless())
 
         monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", handle)
-        monkeypatch.setattr(mcp, "TIMEOUT_SECONDS", 0.03)
         async with (
             httpx2.AsyncClient(transport=mcp._BoundedTransport()) as http,
             Client(
@@ -237,6 +282,7 @@ def test_legacy_http_body_stops_after_request_timeout(monkeypatch: pytest.Monkey
             ) as remote,
             Client(mcp.create_bridge(remote), cache=None) as client,
         ):
+            monkeypatch.setattr(mcp, "TIMEOUT_SECONDS", 0.03)
             with pytest.raises(MCPError):
                 await client.list_tools()
             # The caller timing out must not leave a slow response running until
@@ -304,9 +350,9 @@ def test_one_failed_exchange_leaves_the_bridge_serving(monkeypatch: pytest.Monke
 
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
-def test_stdio_subprocess(mode: str, tmp_path) -> None:
+def test_stdio_subprocess(mode: str, tmp_path: Path) -> None:
     async def run() -> None:
-        with (tmp_path / "stderr").open("w+") as errors:
+        with (tmp_path / "stderr").open("w+", encoding="utf-8") as errors:
             params = StdioServerParameters(
                 command=sys.executable,
                 args=["-W", "error", "-m", "tests.mcp_upstream"],
@@ -314,7 +360,10 @@ def test_stdio_subprocess(mode: str, tmp_path) -> None:
             )
             from mcp.client.stdio import stdio_client
 
-            async with Client(stdio_client(params, errlog=errors), mode=mode, cache=None) as client:
+            async with (
+                asyncio.timeout(15),
+                Client(stdio_client(params, errlog=errors), mode=mode, cache=None) as client,
+            ):
                 assert [tool.name for tool in (await client.list_tools()).tools] == ["echo"]
                 assert _text((await client.call_tool("echo", {"value": "stdio"})).content[0]) == "stdio"
                 assert _text((await client.read_resource("example://profile")).contents[0]) == "Synthetic profile"
@@ -334,8 +383,11 @@ def test_startup_failure_is_one_line(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(result.stderr.splitlines()) == 1
 
 
-def test_connection_failure_is_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_connection_failure_is_safe_and_sends_required_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[httpx2.Headers] = []
+
     def fail(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request.headers)
         raise httpx2.ConnectError("private diagnostic")
 
     monkeypatch.setattr(mcp, "_BoundedTransport", lambda: httpx2.MockTransport(fail))
@@ -346,24 +398,28 @@ def test_connection_failure_is_safe(monkeypatch: pytest.MonkeyPatch) -> None:
         result.stderr
         == "fmind: could not connect to the remote MCP server; check your connection and FMIND_PROFILE_URL\n"
     )
+    assert seen
+    assert seen[0]["user-agent"].startswith("fmind/")
+    assert seen[0]["cache-control"] == "no-cache"
+    assert seen[0]["accept-encoding"] == "identity"
 
 
 def test_failure_after_connecting_does_not_blame_the_remote(monkeypatch: pytest.MonkeyPatch) -> None:
     @asynccontextmanager
-    async def connected(*args: object, **kwargs: object) -> AsyncGenerator[tuple[None, None]]:
+    async def connected(*_args: object, **_kwargs: object) -> AsyncGenerator[tuple[None, None]]:
         yield None, None
 
     class Bridge:
         def create_initialization_options(self) -> None:
             return None
 
-        async def run(self, *args: object) -> None:
+        async def run(self, *_args: object) -> None:
             # What the SDK's stdio writer raises once the host closes stdout.
             raise BrokenPipeError(32, "Broken pipe")
 
     monkeypatch.setattr(mcp, "Client", connected)
     monkeypatch.setattr(mcp, "stdio_server", connected)
-    monkeypatch.setattr(mcp, "create_bridge", lambda remote: Bridge())
+    monkeypatch.setattr(mcp, "create_bridge", lambda _remote: Bridge())
     result = CliRunner().invoke(app, ["mcp"])
     assert result.exit_code == 1
     assert result.stdout == ""

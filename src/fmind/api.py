@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any
+from typing import IO, Any
 
 from fmind import __version__
 
@@ -26,8 +26,8 @@ MAX_DEPTH = 32
 USER_AGENT = f"fmind/{__version__} (+https://github.com/fmind/cli)"
 # Slugs reach a URL, so only the shape the site actually mints is accepted.
 SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
-# Keep tabs and line breaks, but never let website text issue terminal commands.
-CONTROL_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+# Keep tabs, LF, and CRLF, but never let website text issue terminal commands or bare CR overwrites.
+CONTROL_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]|\r(?!\n)")
 
 # Only fields consumed by this CLI are required; new website fields pass through.
 PROFILE_SHAPE = {
@@ -90,7 +90,8 @@ def _http_url(url: str) -> urllib.parse.SplitResult:
             or not parts.hostname
             or parts.username is not None
             or parts.password is not None
-            or any(char.isspace() or ord(char) < 32 for char in url)
+            or CONTROL_PATTERN.search(url)
+            or any(char.isspace() for char in url)
         ):
             raise ValueError("invalid endpoint")
         _ = parts.port  # accessing the port validates its syntax and range
@@ -99,12 +100,12 @@ def _http_url(url: str) -> urllib.parse.SplitResult:
     return parts
 
 
-def article_url(slug: str, *, profile_url: str | None = None) -> str:
+def article_url(slug: str) -> str:
     """Return the Markdown source URL of an article, on the same origin as the profile."""
     if not SLUG_PATTERN.match(slug):
         msg = f"not an article slug: {slug!r}"
         raise FmindError(msg)
-    return origin_url(f"/articles/{slug}.md", profile_url=profile_url)
+    return origin_url(f"/articles/{slug}.md")
 
 
 def _profile_url() -> str:
@@ -112,9 +113,9 @@ def _profile_url() -> str:
     return os.environ.get("FMIND_PROFILE_URL", PROFILE_URL)
 
 
-def origin_url(path: str, *, profile_url: str | None = None) -> str:
+def origin_url(path: str) -> str:
     """Resolve a website endpoint on the configured profile origin."""
-    parts = _http_url(profile_url if profile_url is not None else _profile_url())
+    parts = _http_url(_profile_url())
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
@@ -127,7 +128,7 @@ def _download(url: str, accept: str = "application/json") -> bytes:
     def fetch() -> None:
         try:
             result.put(_fetch(url, accept, deadline))
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 — bridge any worker exception back to caller
             result.put(error)
 
     # DNS and urllib's header reads cannot be cancelled portably. A daemon does
@@ -142,24 +143,51 @@ def _download(url: str, accept: str = "application/json") -> bytes:
     return outcome
 
 
+class _NoDrain:
+    """Prevent stdlib redirect handling from draining an unbounded redirect body into memory."""
+
+    def __init__(self, fp: IO[bytes]) -> None:
+        self._fp = fp
+
+    def read(self, _size: int = -1) -> bytes:
+        return b""
+
+    def close(self) -> None:
+        self._fp.close()
+
+
 class _RedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Allow only safe HTTP(S) redirects without credentials or HTTPS downgrades."""
+    """Allow only safe HTTP(S) redirects without credentials, HTTPS downgrades, or unbounded body drains."""
+
+    def http_error_302(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+    ) -> IO[bytes] | None:
+        return super().http_error_302(req, _NoDrain(fp), code, msg, headers)  # ty: ignore[invalid-argument-type]
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 
     def redirect_request(
         self,
         req: urllib.request.Request,
-        fp: Any,
+        fp: IO[bytes],
         code: int,
         msg: str,
-        headers: Any,
+        headers: http.client.HTTPMessage,
         newurl: str,
     ) -> urllib.request.Request | None:
         source = _http_url(req.full_url)
         try:
             target = _http_url(newurl)
         except FmindError as error:
+            fp.close()
             raise FmindError("the website redirected to an unsafe URL") from error
         if source.scheme == "https" and target.scheme != "https":
+            fp.close()
             raise FmindError("the website redirected from HTTPS to plain HTTP")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
@@ -194,6 +222,7 @@ def _fetch(url: str, accept: str, deadline: float) -> bytes:
                 if len(payload) <= MAX_BYTES and expected is not None and len(payload) != expected:
                     raise http.client.IncompleteRead(bytes(payload))
     except urllib.error.HTTPError as error:
+        error.close()
         msg = f"the website returned HTTP {error.code}"
         raise FmindError(msg) from error
     except TimeoutError as error:
@@ -290,9 +319,9 @@ def _parse_markdown(payload: bytes) -> str:
     return text
 
 
-def load_profile(*, url: str | None = None) -> dict[str, Any]:
+def load_profile() -> dict[str, Any]:
     """Return the portfolio document behind every section command."""
-    return _parse_profile(_download(url if url is not None else _profile_url()))
+    return _parse_profile(_download(_profile_url()))
 
 
 def load_news() -> dict[str, Any]:
@@ -300,7 +329,6 @@ def load_news() -> dict[str, Any]:
     return _parse_json(_download(origin_url(NEWS_PATH)), NEWS_SHAPE, "news")
 
 
-def load_article(slug: str, *, profile_url: str | None = None) -> str:
+def load_article(slug: str) -> str:
     """Return the Markdown source of one published article."""
-    url = article_url(slug, profile_url=profile_url)
-    return _parse_markdown(_download(url, "text/markdown"))
+    return _parse_markdown(_download(article_url(slug), "text/markdown"))

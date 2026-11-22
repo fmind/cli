@@ -18,6 +18,12 @@ def test_without_terms_returns_the_latest_editions_whole(news_archive: dict[str,
     assert slugs(news.search(editions, "", limit=2)) == ["2024-08-16", "2024-08-15-summit"]
     assert news.search(editions, "", limit=1)[0] is editions[0], "an unfiltered edition is the published one"
     assert news.search(editions, "", limit=0) == []
+    assert news.search(editions, "", limit=-1) == []
+
+
+def test_editions_without_items_are_omitted(news_archive: dict[str, Any]) -> None:
+    empty = {**news_archive["editions"][0], "slug": "2024-08-17", "date": "2024-08-17", "items": []}
+    assert slugs(news.search([empty, *news_archive["editions"]], "", limit=1)) == ["2024-08-16"]
 
 
 def test_editions_are_newest_first_whatever_the_published_order(news_archive: dict[str, Any]) -> None:
@@ -38,9 +44,27 @@ def test_terms_keep_only_matching_links(news_archive: dict[str, Any]) -> None:
     assert len(news_archive["editions"][0]["items"]) == 2, "filtering never mutates the archive"
 
 
-def test_terms_match_domains_and_urls(news_archive: dict[str, Any]) -> None:
-    assert slugs(news.search(news_archive["editions"], "security.example", limit=9)) == ["2024-07-01"]
-    assert slugs(news.search(news_archive["editions"], "https://python", limit=9)) == ["2024-08-16"]
+def test_terms_match_each_field_independently(news_archive: dict[str, Any]) -> None:
+    disjoint = {
+        **news_archive["editions"][0],
+        "slug": "2024-09-01",
+        "date": "2024-09-01",
+        "title": "September Briefing",
+        "items": [
+            {
+                "title": "HeadlineToken",
+                "domain": "host-only.example",
+                "description": "SummaryToken",
+                "url": "https://cdn.example/path-token",
+            }
+        ],
+    }
+    editions = [disjoint, news_archive["editions"][2]]
+    assert slugs(news.search(editions, "briefing", limit=9)) == ["2024-09-01"], "matches edition title"
+    assert slugs(news.search(editions, "headlinetoken", limit=9)) == ["2024-09-01"], "matches item title"
+    assert slugs(news.search(editions, "host-only.example", limit=9)) == ["2024-09-01"], "matches item domain"
+    assert slugs(news.search(editions, "summarytoken", limit=9)) == ["2024-09-01"], "matches item description"
+    assert slugs(news.search(editions, "path-token", limit=9)) == ["2024-09-01"], "matches item url"
 
 
 def test_an_edition_date_or_topic_selects_every_link(news_archive: dict[str, Any]) -> None:

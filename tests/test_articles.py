@@ -6,9 +6,16 @@ from fmind import articles
 
 
 def test_latest_is_newest_first_and_bounded(document: dict[str, Any]) -> None:
-    assert [a["title"] for a in articles.latest(document["articles"], limit=9)] == ["Newer", "Older"]
-    assert [a["title"] for a in articles.latest(document["articles"], limit=1)] == ["Newer"]
-    assert articles.latest(document["articles"], limit=0) == []
+    # Chronological order intentionally opposes alphabetical slug order.
+    unsorted = [
+        {**document["articles"][1], "slug": "a-older", "date": "2024-01-01T00:00:00Z"},
+        {**document["articles"][0], "slug": "z-newer", "date": "2024-08-16T00:00:00Z"},
+    ]
+    assert [a["slug"] for a in articles.latest(unsorted, limit=9)] == ["z-newer", "a-older"]
+    assert [a["slug"] for a in articles.latest(unsorted, limit=1)] == ["z-newer"]
+    assert articles.latest(unsorted, limit=0) == []
+    assert articles.latest(unsorted, limit=-1) == []
+    assert articles.latest([], limit=5) == []
     same_day = [
         {**document["articles"][0], "slug": "zeta"},
         {**document["articles"][0], "slug": "alpha"},
@@ -17,10 +24,20 @@ def test_latest_is_newest_first_and_bounded(document: dict[str, Any]) -> None:
 
 
 def test_search_matches_title_summary_slug_and_tags(document: dict[str, Any]) -> None:
-    posts = document["articles"]
-    assert [a["slug"] for a in articles.search(posts, "newer")] == ["newer"]
-    assert [a["slug"] for a in articles.search(posts, "AGENT")] == ["newer"], "matching is case-insensitive"
-    assert [a["slug"] for a in articles.search(posts, "older")] == ["older"]
+    posts = [
+        {
+            **document["articles"][0],
+            "title": "Alpha Heading",
+            "description": "Beta summary text",
+            "slug": "gamma-slug",
+            "tags": ["DeltaTag"],
+        },
+        document["articles"][1],
+    ]
+    assert [a["slug"] for a in articles.search(posts, "alpha")] == ["gamma-slug"], "matches title"
+    assert [a["slug"] for a in articles.search(posts, "beta")] == ["gamma-slug"], "matches description"
+    assert [a["slug"] for a in articles.search(posts, "gamma")] == ["gamma-slug"], "matches slug"
+    assert [a["slug"] for a in articles.search(posts, "DELTATAG")] == ["gamma-slug"], "matches tags case-insensitively"
 
 
 def test_search_ands_its_terms(document: dict[str, Any]) -> None:
@@ -40,10 +57,11 @@ def test_search_respects_the_limit(document: dict[str, Any]) -> None:
 
 
 def test_candidates_prefers_an_exact_slug(document: dict[str, Any]) -> None:
-    posts = document["articles"] + [{"slug": "newer-still", "title": "t", "description": "d", "tags": []}]
+    posts = [*document["articles"], {"slug": "newer-still", "title": "t", "description": "d", "tags": []}]
     assert articles.candidates(posts, "newer") == ["newer"], "an exact slug is never ambiguous"
     assert articles.candidates(posts, "new") == ["newer", "newer-still"]
     assert articles.candidates(posts, "absent") == []
+    assert articles.candidates(posts, "") == [], "empty query never matches all articles"
 
 
 def test_by_slug_returns_the_index_entry(document: dict[str, Any]) -> None:

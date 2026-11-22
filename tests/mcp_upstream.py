@@ -18,6 +18,10 @@ def upstream() -> MCPServer[None]:
     def profile() -> str:
         return "Synthetic profile"
 
+    @server.resource("example://articles/{slug}")
+    def article(slug: str) -> str:
+        return f"Article {slug}"
+
     @server.prompt()
     def brief(audience: str) -> str:
         return f"Brief for {audience}"

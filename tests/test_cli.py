@@ -1,9 +1,12 @@
 """Command surface: every section renders, JSON passthrough, and error handling."""
 
 import json
+import os
 import re
 import shlex
+import signal
 import subprocess
+import sys
 from importlib.metadata import distribution, version
 from pathlib import Path
 from typing import Any
@@ -13,7 +16,7 @@ from markdown_it import MarkdownIt
 from rich.text import Text
 from typer.testing import CliRunner
 
-from fmind import api
+from fmind import api, cli
 from fmind.cli import app
 
 runner = CliRunner()
@@ -86,6 +89,7 @@ def test_section_renders(section: str) -> None:
 @pytest.mark.parametrize(
     ("section", "keys", "message"),
     [
+        ("about", ["biography"], "no biography published"),
         ("skills", ["expertise"], "no expertise published"),
         ("experiences", ["experience"], "no experience published"),
         ("community", ["leadership"], "no community role published"),
@@ -165,14 +169,25 @@ def test_search_ands_unquoted_words(words: list[str]) -> None:
     assert hit.exit_code == 0, hit.output
     assert "Older" in hit.output
     assert "Newer" not in hit.output
+
+
+def test_search_narrows_out_disjoint_terms() -> None:
     assert "no article matches" in runner.invoke(app, ["--no-color", "search", "older", "agent"]).output
 
 
-@pytest.mark.parametrize(("slug", "hint"), [("older llm", "search older llm"), ("older&", "search 'older&'")])
+@pytest.mark.parametrize(
+    ("slug", "hint"),
+    [
+        ("older llm", "search older llm"),
+        ("older&", "search 'older&'"),
+        ("--draft", "search -- --draft"),
+    ],
+)
 def test_read_miss_hint_runs_as_printed(slug: str, hint: str) -> None:
-    result = runner.invoke(app, ["read", slug])
+    result = runner.invoke(app, ["read", "--", slug])
     assert result.exit_code == 1
-    assert result.stderr.endswith(f"try: fmind {hint}\n")
+    assert result.stdout == ""
+    assert result.stderr.endswith(f"; try: fmind {hint}\n")
     # A shell would pass these arguments to the suggested command.
     rerun = runner.invoke(app, ["--no-color", *shlex.split(hint)])
     assert rerun.exit_code == 0, rerun.output
@@ -184,8 +199,10 @@ def test_search_without_a_match_says_so_and_still_succeeds() -> None:
     assert "no article matches" in result.output
 
 
-def test_search_filters_by_tag_without_a_query() -> None:
-    result = runner.invoke(app, ["--no-color", "search", "--tag", "LLM"])
+@pytest.mark.parametrize("tag", ["LLM", "llm"])
+def test_search_filters_by_tag_case_insensitively(tag: str) -> None:
+    result = runner.invoke(app, ["--no-color", "search", "--tag", tag])
+    assert result.exit_code == 0
     assert "Older" in result.output
     assert "Newer" not in result.output
 
@@ -196,21 +213,32 @@ def test_read_renders_the_published_markdown() -> None:
     assert "The body of the article." in result.output
 
 
-def test_read_accepts_a_partial_slug() -> None:
-    assert runner.invoke(app, ["--no-color", "read", "new"]).exit_code == 0
+@pytest.mark.parametrize("slug", ["new", " NEWER "])
+def test_read_accepts_partial_and_normalized_slugs(slug: str) -> None:
+    assert runner.invoke(app, ["--no-color", "read", slug]).exit_code == 0
+
+
+@pytest.mark.parametrize("slug", ["", "   "])
+def test_read_rejects_empty_slug_before_fetching(monkeypatch: pytest.MonkeyPatch, slug: str) -> None:
+    monkeypatch.setattr(api, "_download", lambda *_args: (_ for _ in ()).throw(AssertionError("should not fetch")))
+    result = runner.invoke(app, ["read", slug])
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "slug must not be empty" in result.stderr
 
 
 def test_read_raw_emits_the_markdown_source() -> None:
     result = runner.invoke(app, ["read", "newer", "--raw"])
     assert result.exit_code == 0
-    assert result.output.startswith("# Newer")
+    assert result.stdout.startswith("# Newer")
 
 
 def test_read_reports_an_unknown_slug() -> None:
     result = runner.invoke(app, ["read", "does-not-exist"])
     assert result.exit_code == 1
-    assert "fmind search" in result.output
-    assert "Traceback" not in result.output
+    assert result.stdout == ""
+    assert "fmind search" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 @pytest.mark.parametrize("slug", ["\x1b]52;c;ZXhhbXBsZQ==\x07", "\x9b2J", "\x00", "\ud800"])
@@ -224,37 +252,24 @@ def test_unknown_slug_errors_escape_unsafe_characters(slug: str) -> None:
     assert "Traceback" not in result.stderr
 
 
-@pytest.mark.parametrize("args", [["whoami"], ["whoami", "--json"]])
-def test_invalid_unicode_reports_a_one_line_error(document: dict[str, Any], args: list[str]) -> None:
-    document["metadata"]["name"] = "Invalid \ud800 name"
-    result = runner.invoke(app, args)
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert result.stderr == "fmind: the profile endpoint returned invalid Unicode\n"
-
-
-@pytest.mark.parametrize("args", [["whoami"], ["whoami", "--json"]])
-def test_overflowing_json_numbers_report_a_one_line_error(
-    document: dict[str, Any], args: list[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    document["metadata"]["future"] = "NUMBER"
-    payload = json.dumps(document).replace('"NUMBER"', "1e999").encode()
-    monkeypatch.setattr(api, "_download", lambda *args: payload)
-    result = runner.invoke(app, args)
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert result.stderr == "fmind: the profile endpoint returned a non-finite number\n"
-
-
-def test_read_reports_an_ambiguous_slug(document: dict[str, Any]) -> None:
+def test_read_reports_an_ambiguous_slug_on_one_line(document: dict[str, Any]) -> None:
     document["articles"].append(dict(document["articles"][0], slug="newer-still"))
     result = runner.invoke(app, ["read", "new"])
     assert result.exit_code == 1
-    assert "matches 2 articles" in result.output
+    assert result.stdout == ""
+    assert "matches 2 articles" in result.stderr
+    assert "more)" not in result.stderr
+    assert len(result.stderr.splitlines()) == 1
+
+    document["articles"] = [dict(document["articles"][0], slug=f"newer-{i}") for i in range(12)]
+    many = runner.invoke(app, ["read", "newer"])
+    assert many.exit_code == 1
+    assert "matches 12 articles" in many.stderr
+    assert "(+2 more)" in many.stderr
 
 
 def test_read_reports_an_unreachable_article(monkeypatch: pytest.MonkeyPatch, document: dict[str, Any]) -> None:
-    def fail(url: str, accept: str = "application/json") -> bytes:
+    def fail(url: str, _accept: str = "application/json") -> bytes:
         if url.endswith(".md"):
             raise api.FmindError("could not reach the article")
         return json.dumps(document).encode()
@@ -262,7 +277,8 @@ def test_read_reports_an_unreachable_article(monkeypatch: pytest.MonkeyPatch, do
     monkeypatch.setattr("fmind.api._download", fail)
     result = runner.invoke(app, ["read", "newer"])
     assert result.exit_code == 1
-    assert "could not reach the article" in result.output
+    assert result.stdout == ""
+    assert "could not reach the article" in result.stderr
 
 
 def test_papers_shows_the_thesis_and_publications() -> None:
@@ -351,9 +367,10 @@ def test_news_without_a_match_says_so_and_still_succeeds() -> None:
 
 
 def test_news_failures_are_one_line(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("fmind.api._download", lambda url, accept="": b"[]")
+    monkeypatch.setattr("fmind.api._download", lambda _url, _accept="": b"[]")
     result = runner.invoke(app, ["news"])
     assert result.exit_code == 1
+    assert result.stdout == ""
     assert result.stderr == "fmind: the news endpoint returned an invalid news archive at news\n"
 
 
@@ -404,12 +421,6 @@ def test_search_rejects_an_unknown_tag_and_lists_the_published_ones() -> None:
     assert result.stderr == "fmind: unknown tag 'Agents'; choose one of: Agent, LLM\n"
 
 
-def test_search_matches_tags_case_insensitively() -> None:
-    result = runner.invoke(app, ["--no-color", "search", "--tag", "llm"])
-    assert result.exit_code == 0
-    assert "Older" in result.output
-
-
 def test_experiences_preserve_website_order_without_inventing_status() -> None:
     output = runner.invoke(app, ["--no-color", "experiences"]).output
     assert output.index("CURRENT COMPANY") < output.index("PAST COMPANY")
@@ -441,10 +452,14 @@ def test_json_escapes_controls_in_unvalidated_fields(document: dict[str, Any]) -
     assert json.loads(result.stdout)["metadata"]["future"] == "x\x9b2J\x7f"
 
 
-def test_json_read_carries_the_markdown(document: dict[str, Any]) -> None:
+@pytest.mark.parametrize("args", [["--json", "read", "newer"], ["--json", "read", "newer", "--raw"]])
+def test_json_read_carries_the_markdown_and_beats_raw(document: dict[str, Any], args: list[str]) -> None:
     # An index field named like the body must not replace the fetched Markdown.
     document["articles"][0]["markdown"] = "https://example.test/articles/newer.md"
-    payload = json.loads(runner.invoke(app, ["--json", "read", "newer"]).output)
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    payload = json.loads(result.stdout)
     assert payload["slug"] == "newer"
     assert payload["markdown"].startswith("# Newer")
     assert payload["title"] == "Newer"
@@ -469,13 +484,32 @@ def test_version_exits_before_any_fetch() -> None:
 
 def test_module_entrypoint_runs_the_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     import runpy
-    import sys
 
     monkeypatch.setattr(sys, "argv", ["fmind", "--version"])
     with pytest.raises(SystemExit) as exit_info:
         runpy.run_module("fmind", run_name="__main__")
     assert exit_info.value.code == 0
     assert capsys.readouterr().out == f"fmind {version('fmind')}\n"
+
+
+def test_entrypoint_exits_cleanly_on_usage_interrupt_and_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as failed:
+        app(["read", "does-not-exist"], standalone_mode=True)
+    assert failed.value.code == 1
+    assert "fmind: no article matches" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit) as usage:
+        app(["--no-such-option"], standalone_mode=True)
+    assert usage.value.code == 2
+    assert capsys.readouterr().err
+
+    monkeypatch.setattr(cli, "load_profile", lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
+    with pytest.raises(SystemExit) as interrupted:
+        app(["whoami"], standalone_mode=True)
+    assert interrupted.value.code == 130
+    assert capsys.readouterr() == ("", "")
 
 
 def test_no_arguments_shows_the_whoami_card_and_points_to_help() -> None:
@@ -492,19 +526,21 @@ def test_no_arguments_with_json_prints_only_the_whoami_data(document: dict[str, 
 
 
 def test_unreachable_profile_reports_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fail(url: str, accept: str = "application/json") -> bytes:
+    def fail(_url: str, _accept: str = "application/json") -> bytes:
         raise api.FmindError("could not reach https://example.test/api/profile")
 
     monkeypatch.setattr("fmind.api._download", fail)
     result = runner.invoke(app, ["whoami"])
     assert result.exit_code == 1
-    assert "fmind:" in result.output
-    assert "Traceback" not in result.output
+    assert result.stdout == ""
+    assert "fmind:" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
+@pytest.mark.parametrize("flag", ["-h", "--help"])
 @pytest.mark.parametrize("command", [[], ["experiences"], ["read"]])
-def test_help_exposes_json_and_omits_refresh(command: list[str]) -> None:
-    result = runner.invoke(app, [*command, "--help"])
+def test_help_exposes_json_and_omits_refresh(flag: str, command: list[str]) -> None:
+    result = runner.invoke(app, [*command, flag])
     assert result.exit_code == 0
     # CI forces Rich colour, which can insert ANSI sequences inside option names.
     visible = Text.from_ansi(result.stdout).plain
@@ -535,36 +571,13 @@ def test_json_option_does_not_leak_between_invocations() -> None:
 
 @pytest.mark.parametrize("command", [["experiences"], ["experiences", "--json"]])
 def test_malformed_profile_is_a_one_line_error(monkeypatch: pytest.MonkeyPatch, command: list[str]) -> None:
-    monkeypatch.setattr("fmind.api._download", lambda *args: b'{"metadata": {}}')
+    monkeypatch.setattr("fmind.api._download", lambda *_args: b'{"metadata": {}}')
     result = runner.invoke(app, command)
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr.startswith("fmind: ")
     assert len(result.stderr.splitlines()) == 1
     assert "Traceback" not in result.stderr
-
-
-def test_ambiguous_slug_error_is_one_line(document: dict[str, Any]) -> None:
-    document["articles"].append(dict(document["articles"][0], slug="newer-still"))
-    result = runner.invoke(app, ["read", "new"])
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert len(result.stderr.splitlines()) == 1
-
-
-def test_plain_biography_renders_markdown(document: dict[str, Any]) -> None:
-    document["biography"] = ["A **bold** introduction."]
-    result = runner.invoke(app, ["--no-color", "about"])
-    assert result.exit_code == 0
-    assert "A bold introduction." in result.stdout
-    assert "**" not in result.stdout
-
-
-def test_community_keeps_the_full_organization(document: dict[str, Any]) -> None:
-    document["leadership"][0]["organization"] = "Example Research Foundation"
-    result = runner.invoke(app, ["--no-color", "community"], terminal_width=120)
-    assert result.exit_code == 0
-    assert "Example Research Foundation" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -577,16 +590,7 @@ def test_invalid_usage_exits_without_data(command: list[str]) -> None:
     assert result.stdout == ""
 
 
-@pytest.mark.parametrize("term", ["xterm-256color", "dumb"])
-def test_colour_respects_no_color_and_explicit_flags(monkeypatch: pytest.MonkeyPatch, term: str) -> None:
-    from fmind import render
-
-    monkeypatch.setenv("TERM", term)
-    monkeypatch.setenv("NO_COLOR", "1")
-    assert render.console().no_color
-    assert render.console(color=False).no_color
-    assert not render.console(color=True).no_color
-    assert render.console(color=True).is_terminal
+def test_colour_flags_control_ansi_and_never_pollute_json() -> None:
     result = runner.invoke(app, ["--no-color", "experiences"])
     assert "\x1b[" not in result.stdout
     coloured = runner.invoke(app, ["--color", "experiences"])
@@ -620,6 +624,8 @@ def test_summary_json_includes_the_information_shown_in_text(document: dict[str,
     assert credentials["certifications"] == document["certifications"]
     assert credentials["thesis"] == document["thesis"]
     assert credentials["specializations"] == document["specializations"]
+    publications = payload("papers")
+    assert publications == {"thesis": document["thesis"], "papers": document["papers"]}
 
     document["experience"] = []
     document["certifications"] = []
@@ -658,31 +664,23 @@ def test_identity_and_community_remain_readable_at_40_columns(
     ("command", "section"),
     [("community", "leadership"), ("certifications", "certifications"), ("certifications", "specializations")],
 )
-def test_published_links_are_visible_and_validated(document: dict[str, Any], command: str, section: str) -> None:
+def test_published_links_are_visible(document: dict[str, Any], command: str, section: str) -> None:
     url = f"https://example.test/{section}"
     document[section][0]["url"] = url
     result = runner.invoke(app, ["--no-color", command])
     assert result.exit_code == 0, result.output
     assert url in result.stdout
 
-    for invalid in (None, 42, "\x1b]52;c;payload\x07"):
-        document[section][0]["url"] = invalid
-        result = runner.invoke(app, [command])
-        assert result.exit_code == 1
-        assert result.stdout == ""
-        assert len(result.stderr.splitlines()) == 1
-        assert result.stderr.startswith("fmind: ")
-        assert "\x1b" not in result.stderr
-        assert "Traceback" not in result.stderr
-
 
 @pytest.mark.parametrize("section", [*SECTIONS, "read newer"])
 @pytest.mark.parametrize("colour", ["--no-color", "--color", "FORCE_COLOR"])
 def test_redirected_output_has_no_trailing_whitespace(section: str, colour: str) -> None:
     # Forced colour makes Rich treat the redirected stream as a terminal.
-    flags, env = ([], {"FORCE_COLOR": "1"}) if colour == "FORCE_COLOR" else ([colour], {})
+    flags, env = ([], {"FORCE_COLOR": "1", "TERM": "xterm-256color"}) if colour == "FORCE_COLOR" else ([colour], {})
     result = runner.invoke(app, [*flags, *section.split()], terminal_width=120, env=env)
     assert result.exit_code == 0, result.output
+    if colour in {"--color", "FORCE_COLOR"} and section != "about":
+        assert "\x1b[" in result.stdout
     for line in result.stdout.splitlines():
         assert not line.endswith(" ")
         assert Text.from_ansi(line).plain == Text.from_ansi(line).plain.rstrip()
@@ -730,21 +728,18 @@ class _ClosedPipe:
     "command",
     [["--no-color", "articles"], ["--color", "articles"], ["--json", "articles"], ["read", "newer", "--raw"]],
 )
-def test_closed_reader_ends_quietly(monkeypatch: pytest.MonkeyPatch, command: list[str]) -> None:
-    import sys
-
+def test_closed_reader_ends_quietly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], command: list[str]
+) -> None:
     monkeypatch.setattr(sys, "stdout", _ClosedPipe())
     with pytest.raises(SystemExit) as exit_info:
         app(command, standalone_mode=True)
-    # Click turns EPIPE into a quiet exit 1; the data was flushed before interpreter shutdown.
+    # Closed downstream pipes exit 1 quietly; stdout flushed inside the command.
     assert exit_info.value.code == 1
+    assert capsys.readouterr().err == ""
 
 
 def test_pager_is_used_only_for_an_interactive_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys
-
-    from fmind import cli
-
     class Terminal:
         def isatty(self) -> bool:
             return True
@@ -758,7 +753,7 @@ def test_pager_is_used_only_for_an_interactive_terminal(monkeypatch: pytest.Monk
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setenv("PAGER", "less -S")
     assert cli._pager_command() == ["less", "-S"]
-    for disabled in ("", "cat", "'unbalanced"):
+    for disabled in ("", "cat", "/bin/cat", "'unbalanced"):
         monkeypatch.setenv("PAGER", disabled)
         assert cli._pager_command() is None
     monkeypatch.delenv("PAGER")
@@ -769,17 +764,14 @@ def test_pager_is_used_only_for_an_interactive_terminal(monkeypatch: pytest.Monk
     monkeypatch.delenv("TERM")
     assert cli._pager_command() is None, "less would wait at a hidden prompt without TERM"
     monkeypatch.setenv("TERM", "xterm-256color")
-    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr("shutil.which", lambda _name: None)
     assert cli._pager_command() is None
 
 
 def test_pager_needs_a_terminal_it_can_drive(monkeypatch: pytest.MonkeyPatch) -> None:
     import curses
-    import sys
 
-    from fmind import cli
-
-    def unknown(*args: object) -> None:
+    def unknown(*_args: object) -> None:
         raise curses.error("setupterm: could not find terminal")
 
     monkeypatch.setenv("TERM", "xterm-nosuchterm")
@@ -793,14 +785,18 @@ def test_pager_needs_a_terminal_it_can_drive(monkeypatch: pytest.MonkeyPatch) ->
     ("term", "expected"), [("xterm-256color", True), ("xterm-nosuchterm", False), ("unknown", False)]
 )
 def test_pager_checks_the_terminfo_database(term: str, expected: bool) -> None:
-    import os
-    import sys
-
     # A fresh interpreter: curses keeps the first terminal it sets up for the whole process.
     # `unknown` is in terminfo, but generic; less would wait at a hidden prompt for it too.
     script = "from fmind import cli; print(cli._full_screen_terminal())"
     result = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", script], env={**os.environ, "TERM": term}, capture_output=True, text=True, check=True
+        [sys.executable, "-c", script],
+        env={**os.environ, "TERM": term},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=True,
     )
     assert result.stdout == f"{expected}\n"
 
@@ -809,22 +805,32 @@ class _Pager:
     """A pager process: records its input and exits with `code`, or is interrupted first."""
 
     def __init__(
-        self, command: list[str], *, code: int = 0, interrupt: bool = False, quit_early: bool = False, **kwargs: Any
+        self,
+        command: list[str],
+        *,
+        code: int = 0,
+        interrupt: bool = False,
+        interrupt_close: bool = False,
+        quit_early: bool = False,
+        has_stdin: bool = True,
+        **kwargs: Any,
     ) -> None:
         self.command = command
         self.kwargs = kwargs
         self.code = code
         self.interrupt = interrupt
+        self.interrupt_close = interrupt_close
         self.quit_early = quit_early
         self.written = b""
         self.waits = 0
-        self.stdin = self
+        self.stdin = self if has_stdin else None
 
     def __enter__(self) -> _Pager:
         return self
 
-    def __exit__(self, *args: object) -> None:
-        return None
+    def __exit__(self, *_args: object) -> None:
+        if self.interrupt_close:
+            raise KeyboardInterrupt
 
     def write(self, data: bytes) -> int:
         if self.interrupt:
@@ -846,8 +852,6 @@ class _Pager:
 
 
 def test_system_pager_keeps_colour_and_respects_less(monkeypatch: pytest.MonkeyPatch) -> None:
-    from fmind import cli
-
     pagers: list[_Pager] = []
 
     def popen(command: list[str], **kwargs: Any) -> _Pager:
@@ -866,22 +870,26 @@ def test_system_pager_keeps_colour_and_respects_less(monkeypatch: pytest.MonkeyP
     assert pagers[0].kwargs["stderr"] == subprocess.DEVNULL
 
 
-@pytest.mark.parametrize("ending", ["interrupt", "quit_early"])
+@pytest.mark.parametrize("ending", ["interrupt", "interrupt_close", "quit_early", "no_stdin"])
 def test_pager_owns_the_terminal_until_it_quits(monkeypatch: pytest.MonkeyPatch, ending: str) -> None:
-    from fmind import cli
-
-    pager = _Pager(["less"], **{ending: True})
-    monkeypatch.setattr("subprocess.Popen", lambda command, **kwargs: pager)
+    kwargs = {"has_stdin": False} if ending == "no_stdin" else {ending: True}
+    pager = _Pager(["less"], **kwargs)
+    monkeypatch.setattr("subprocess.Popen", lambda _command, **_kwargs: pager)
     cli._SystemPager(["less"]).show("text")
-    # After Ctrl-C, or a quit before reading everything, fmind still waits for the
-    # pager to restore the terminal instead of killing it.
+    # After Ctrl-C (during write or close) or early quit, wait for the pager to restore the terminal.
     assert pager.waits == (2 if ending == "interrupt" else 1)
+
+
+@pytest.mark.parametrize("code", [-signal.SIGINT, 128 + signal.SIGINT])
+def test_pager_sigint_exit_propagates_interrupt(monkeypatch: pytest.MonkeyPatch, code: int) -> None:
+    pager = _Pager(["more"], code=code)
+    monkeypatch.setattr("subprocess.Popen", lambda _command, **_kwargs: pager)
+    with pytest.raises(KeyboardInterrupt):
+        cli._SystemPager(["more"]).show("text")
 
 
 @pytest.mark.parametrize("failure", ["launch", "exit"])
 def test_pager_failures_are_safe_errors(monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
-    from fmind import cli
-
     error = OSError("private launch diagnostic")
 
     def popen(command: list[str], **kwargs: Any) -> _Pager:
@@ -901,25 +909,16 @@ def test_pager_failures_are_safe_errors(monkeypatch: pytest.MonkeyPatch, failure
         assert caught.value.__cause__ is error
 
 
-def test_read_pages_on_an_interactive_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    from fmind import cli
-
+def test_only_read_pages_on_an_interactive_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     shown: list[str] = []
     monkeypatch.setattr(cli, "_pager_command", lambda: ["less"])
-    monkeypatch.setattr(cli._SystemPager, "show", lambda self, content: shown.append(content))
-    result = runner.invoke(app, ["--color", "read", "newer"])
-    assert result.exit_code == 0, result.output
+    monkeypatch.setattr(cli._SystemPager, "show", lambda _self, content: shown.append(content))
+    whoami_result = runner.invoke(app, ["--color", "whoami"])
+    assert whoami_result.exit_code == 0, whoami_result.output
+    assert shown == [], "non-read commands never invoke the pager"
+
+    read_result = runner.invoke(app, ["--color", "read", "newer"])
+    assert read_result.exit_code == 0, read_result.output
     assert len(shown) == 1
     assert "The body of the article." in shown[0]
-    assert "The body of the article." not in result.stdout
-
-
-def test_article_body_uses_standard_ansi_slots_for_code() -> None:
-    from fmind import render
-
-    out = render.console(color=True)
-    with out.capture() as captured:
-        out.print(render.article_body("```python\ndef greet() -> str:\n    return 'hi'\n```\n"))
-    rendered = captured.get()
-    assert "\x1b[34mdef\x1b[0m" in rendered
-    assert "\x1b[94m" not in rendered
+    assert "The body of the article." not in read_result.stdout

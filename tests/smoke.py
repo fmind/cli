@@ -54,14 +54,14 @@ async def smoke_mcp() -> None:
             if tool.name == "search_articles":
                 arguments = {"query": "compatibility", "limit": 1}
             elif tool.name == "get_article":
-                posts = load_profile()["articles"]
+                posts = (await asyncio.to_thread(load_profile))["articles"]
                 if not posts:
                     raise RuntimeError("the website lists no article for the MCP read check")
                 arguments = {"slug": posts[0]["slug"]}
             elif tool.name == "search_news":
                 arguments = {"query": "compatibility", "limit": 1}
             elif tool.name == "get_news":
-                editions = load_news()["editions"]
+                editions = (await asyncio.to_thread(load_news))["editions"]
                 if not editions:
                     raise RuntimeError("the website lists no news edition for the MCP read check")
                 arguments = {"slug": editions[0]["slug"]}
@@ -145,12 +145,12 @@ def main() -> int:
     failed = False
     try:
         smoke_portfolio()
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 — isolate API failures from MCP check
         failed = True
         print(f"FAIL  API: {error}", file=sys.stderr)
     try:
         asyncio.run(smoke_mcp())
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 — isolate MCP failures and redact diagnostics
         failed = True
         # Unexpected SDK/transport errors can carry private diagnostics.
         detail = str(error) if isinstance(error, RuntimeError) else type(error).__name__

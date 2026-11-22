@@ -1,18 +1,17 @@
 """Command surface, mirroring the sections of www.fmind.dev."""
 
-import asyncio
 import contextlib
 import json
 import os
 import shlex
-import shutil
-import subprocess
+import signal
 import sys
-from typing import IO, Annotated, Any, cast
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console, RenderableType
-from rich.pager import Pager
 
 from fmind import __version__, articles, news, render
 from fmind.api import CONTROL_PATTERN, FmindError, load_article, load_news, load_profile
@@ -22,6 +21,10 @@ app = typer.Typer(
     help="Read Médéric Hurier's (Fmind) portfolio and daily news from the terminal. Every command renders "
     "live documents published by https://www.fmind.dev. Without a command, show the whoami card. "
     "Use mcp for the stdio MCP bridge.",
+    epilog="Environment: FMIND_PROFILE_URL overrides the origin; NO_COLOR disables ANSI colour. "
+    "Exit codes: 0 ok, 1 failure, 2 usage, 130 interrupt. "
+    "Examples: fmind articles --json | jq '.[0].slug'  •  fmind news agent",
+    context_settings={"help_option_names": ["-h", "--help"]},
     add_completion=False,
     rich_markup_mode="rich",
     pretty_exceptions_enable=False,
@@ -42,12 +45,11 @@ def _version(value: bool) -> None:
 def main(
     ctx: typer.Context,
     as_json: JsonOption = False,
-    color: Annotated[
+    color: Annotated[  # noqa: ARG001 — read via ctx.find_root().params["color"]
         bool | None, typer.Option("--color/--no-color", help="Force or suppress ANSI colour; auto by default.")
     ] = None,
     _v: Annotated[bool, typer.Option("--version", callback=_version, is_eager=True, help="Show the version.")] = False,
 ) -> None:
-    """Set output options before the command, or use --json on any command."""
     if ctx.invoked_subcommand is None:
         # A bare `fmind` works like a business card; `--help` lists everything else.
         whoami(ctx)
@@ -71,21 +73,15 @@ def _doc() -> dict[str, Any]:
         raise _fail(str(error)) from error
 
 
-def _news() -> dict[str, Any]:
-    """Load the news archive, reporting a clear error instead of a traceback."""
-    try:
-        return load_news()
-    except FmindError as error:
-        raise _fail(str(error)) from error
-
-
-class _SystemPager(Pager):
+class _SystemPager:
     """Page through the user's pager with colour, quitting at once when the text fits one screen."""
 
-    def __init__(self, command: list[str]) -> None:
-        self.command = command
+    def __init__(self, command: Sequence[str]) -> None:
+        self.command = list(command)
 
     def show(self, content: str) -> None:
+        import subprocess
+
         # Like Git: respect an explicit LESS, otherwise keep colours (-R), skip
         # paging for short output (-F), and leave the text on screen (-X).
         environment = {**os.environ, "LESS": os.environ.get("LESS", "FRX")}
@@ -96,19 +92,18 @@ class _SystemPager(Pager):
             raise FmindError(message) from error
         # Like the standard library's pager: Ctrl-C belongs to the pager. subprocess.run
         # would kill it, leaving the terminal in raw mode, so wait for it to quit instead.
-        # Ctrl-C drops the unwritten rest, and a pager that quits early closes the pipe.
-        with (
-            contextlib.suppress(OSError),
-            cast(IO[bytes], process.stdin) as pipe,
-            contextlib.suppress(KeyboardInterrupt),
-        ):
-            pipe.write(content.encode())
+        # Guard pipe close too so a Ctrl-C during flush still waits for the pager.
+        if process.stdin is not None:
+            with contextlib.suppress(OSError, KeyboardInterrupt), process.stdin as pipe:
+                pipe.write(content.encode())
         while True:
             try:
                 code = process.wait()
                 break
             except KeyboardInterrupt:
                 pass
+        if code in {-signal.SIGINT, 128 + signal.SIGINT}:
+            raise KeyboardInterrupt
         if code != 0:
             raise FmindError(message)
 
@@ -134,13 +129,15 @@ def _full_screen_terminal() -> bool:
 
 def _pager_command() -> list[str] | None:
     """Return the pager for an interactive terminal, or None to print directly."""
+    import shutil
+
     if not (sys.stdin.isatty() and sys.stdout.isatty() and _full_screen_terminal()):
         return None
     try:
         command = shlex.split(os.environ.get("PAGER", "less"))
     except ValueError:
         return None
-    if not command or command[0] == "cat" or shutil.which(command[0]) is None:
+    if not command or Path(command[0]).name == "cat" or shutil.which(command[0]) is None:
         return None
     return command
 
@@ -155,7 +152,7 @@ def _write(text: str) -> None:
     sys.stdout.flush()
 
 
-def _emit(ctx: typer.Context, body: RenderableType, payload: Any, *, as_json: bool, page: bool = False) -> None:
+def _emit(ctx: typer.Context, body: RenderableType, payload: object, *, as_json: bool, page: bool = False) -> None:
     """Print either the rendered section or its JSON data."""
     if as_json or ctx.find_root().params["as_json"]:
         # json.dumps escapes C0 controls but not DEL or C1 (such as CSI); fields the
@@ -172,7 +169,7 @@ def _emit(ctx: typer.Context, body: RenderableType, payload: Any, *, as_json: bo
         out.print(trimmed, crop=False)
         return
     try:
-        with out.pager(pager=_SystemPager(command), styles=True):
+        with out.pager(pager=_SystemPager(command), styles=True):  # ty: ignore[invalid-argument-type]
             out.print(trimmed, crop=False)
     except FmindError as error:
         raise _fail(str(error)) from error
@@ -244,7 +241,7 @@ def projects(ctx: typer.Context, limit: LimitOption = 6, as_json: JsonOption = F
     """Open-source repositories and video series; --limit bounds each list."""
     doc = _doc()
     payload = {"open_source": doc["open_source"][:limit], "youtube_series": doc["youtube_series"][:limit]}
-    _emit(ctx, render.projects(doc, limit=limit), payload, as_json=as_json)
+    _emit(ctx, render.projects(payload), payload, as_json=as_json)
 
 
 @app.command()
@@ -295,15 +292,21 @@ def read(
     raw: Annotated[bool, typer.Option("--raw", help="Print the Markdown source instead of rendering it.")] = False,
     as_json: JsonOption = False,
 ) -> None:
-    """Read one article in the terminal, from its published Markdown."""
+    """Read one article in the terminal, from its published Markdown. Pages via $PAGER (default less, LESS=FRX)."""
+    wanted = slug.strip().lower()
+    if not wanted:
+        raise typer.BadParameter("slug must not be empty", param_hint="SLUG")
     doc = _doc()
-    matches = articles.candidates(doc["articles"], slug.strip().lower())
+    matches = articles.candidates(doc["articles"], wanted)
     if not matches:
-        # Quote only what the shell would split or expand, so the hint runs as printed.
-        raise _fail(f"no article matches {slug!r} — try: fmind {shlex.join(['search', *slug.split()])}")
+        # Quote only what the shell would split or expand, and separate leading `-` tokens.
+        terms = slug.split()
+        hint_args = ["search", "--", *terms] if any(term.startswith("-") for term in terms) else ["search", *terms]
+        raise _fail(f"no article matches {slug!r}; try: fmind {shlex.join(hint_args)}")
     if len(matches) > 1:
         listed = ", ".join(matches[:10])
-        raise _fail(f"{slug!r} matches {len(matches)} articles: {listed}")
+        suffix = f", … (+{len(matches) - 10} more)" if len(matches) > 10 else ""
+        raise _fail(f"{slug!r} matches {len(matches)} articles: {listed}{suffix}")
     resolved = matches[0]
     try:
         markdown = load_article(resolved)
@@ -339,7 +342,10 @@ def list_news(
     as_json: JsonOption = False,
 ) -> None:
     """Daily curated links, newest edition first; terms keep only matching links."""
-    archive = _news()
+    try:
+        archive = load_news()
+    except FmindError as error:
+        raise _fail(str(error)) from error
     terms = " ".join(query or [])
     # Today's edition is the common read; a search looks further back by default.
     count = limit if limit is not None else (10 if terms.strip() else 1)
@@ -357,7 +363,9 @@ def hire(ctx: typer.Context, as_json: JsonOption = False) -> None:
 
 @app.command()
 def mcp(ctx: typer.Context) -> None:
-    """Serve the website's remote MCP tools, resources, and prompts over stdio."""
+    """Serve the website's MCP tools, resources, and prompts over protocol-only stdio (uses FMIND_PROFILE_URL)."""
+    import asyncio
+
     if ctx.find_root().params["as_json"]:
         raise typer.BadParameter("mcp uses protocol-only stdio; --json applies to portfolio commands")
     try:

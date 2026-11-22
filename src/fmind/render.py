@@ -1,12 +1,10 @@
 """Render sections of the portfolio document as terminal output."""
 
 import errno
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
-from rich.markdown import Markdown
-from rich.padding import Padding
 from rich.segment import Segment
 from rich.style import Style
 from rich.table import Table
@@ -60,7 +58,8 @@ def _rstrip(line: list[Segment]) -> Iterable[Segment]:
 def _link(url: str) -> Text:
     """A published URL on one logical line: folding it would break copying and clicking."""
     # Terminals that support OSC 8 make it clickable; the text stays the literal URL.
-    style = Style(underline=True, link=url) if url.startswith(("https://", "http://", "mailto:")) else "underline"
+    safe = url.startswith(("https://", "http://", "mailto:")) and not any(ch.isspace() for ch in url)
+    style = Style(underline=True, link=url) if safe else "underline"
     return Text(url, style=style, no_wrap=True, overflow="ignore")
 
 
@@ -74,7 +73,7 @@ def _listing(blocks: Sequence[RenderableType], empty: str) -> RenderableType:
     return Group(*blocks) if blocks else Text(empty)
 
 
-def _rows(pairs: list[tuple[str, RenderableType]]) -> Table:
+def _rows(pairs: Sequence[tuple[str, RenderableType]]) -> Table:
     """Lay out aligned key/value rows without visible borders."""
     table = Table.grid(padding=(0, 2))
     table.add_column(style=ACCENT, width=11, overflow="fold")
@@ -84,7 +83,7 @@ def _rows(pairs: list[tuple[str, RenderableType]]) -> Table:
     return table
 
 
-def whoami(doc: dict[str, Any]) -> RenderableType:
+def whoami(doc: Mapping[str, Any]) -> RenderableType:
     """Identity, location, featured experience, availability, contact, and social profiles."""
     meta = doc["metadata"]
     experience = doc.get("experience") or []
@@ -123,18 +122,21 @@ def whoami(doc: dict[str, Any]) -> RenderableType:
     )
 
 
-def about(doc: dict[str, Any]) -> RenderableType:
+def about(doc: Mapping[str, Any]) -> RenderableType:
     """The biography paragraphs."""
-    return Group(*(Padding(Markdown(p, hyperlinks=False), (0, 0, 1, 0)) for p in doc["biography"]))
+    from rich.markdown import Markdown
+
+    blocks = [_entry(Markdown(p, hyperlinks=False)) for p in doc["biography"]]
+    return _listing(blocks, "no biography published")
 
 
-def skills(doc: dict[str, Any]) -> RenderableType:
+def skills(doc: Mapping[str, Any]) -> RenderableType:
     """Show expertise without inventing command-line options or local labels."""
     blocks = [_entry(Text(card["title"], style="bold"), Text(card["description"])) for card in doc["expertise"]]
     return _listing(blocks, "no expertise published")
 
 
-def experiences(doc: dict[str, Any]) -> RenderableType:
+def experiences(doc: Mapping[str, Any]) -> RenderableType:
     """Engagements in the order published by the website."""
     blocks = [
         _entry(
@@ -148,7 +150,7 @@ def experiences(doc: dict[str, Any]) -> RenderableType:
     return _listing(blocks, "no experience published")
 
 
-def community(doc: dict[str, Any]) -> RenderableType:
+def community(doc: Mapping[str, Any]) -> RenderableType:
     """Ambassador and advisory roles, with their published links."""
     blocks = [
         _entry(
@@ -162,7 +164,7 @@ def community(doc: dict[str, Any]) -> RenderableType:
     return _listing(blocks, "no community role published")
 
 
-def certifications(doc: dict[str, Any]) -> RenderableType:
+def certifications(doc: Mapping[str, Any]) -> RenderableType:
     """Credentials, doctorate, and specializations with published evidence."""
     blocks: list[RenderableType] = []
     for badge in doc["certifications"]:
@@ -183,11 +185,10 @@ def certifications(doc: dict[str, Any]) -> RenderableType:
     return Group(*blocks)
 
 
-def projects(doc: dict[str, Any], *, limit: int = 6) -> RenderableType:
-    """Open-source repositories, then video series; `limit` bounds each list."""
-    count = max(limit, 0)
+def projects(doc: Mapping[str, Any]) -> RenderableType:
+    """Open-source repositories, then video series."""
     blocks: list[RenderableType] = []
-    for project in doc["open_source"][:count]:
+    for project in doc["open_source"]:
         lines: list[RenderableType] = [
             Text(project["title"], style="bold"),
             Text(project["description"]),
@@ -199,7 +200,7 @@ def projects(doc: dict[str, Any], *, limit: int = 6) -> RenderableType:
             code.append_text(_link(repo))
             lines.append(code)
         blocks.append(_entry(*lines))
-    series = doc["youtube_series"][:count]
+    series = doc["youtube_series"]
     if series:
         blocks += [Text("VIDEO SERIES", style=ACCENT), Text()]
     blocks += [
@@ -208,7 +209,7 @@ def projects(doc: dict[str, Any], *, limit: int = 6) -> RenderableType:
     return _listing(blocks, "no project published")
 
 
-def articles(posts: list[dict[str, Any]], *, footer: str = "") -> RenderableType:
+def articles(posts: Sequence[Mapping[str, Any]], *, footer: str = "") -> RenderableType:
     """A list of articles, one block each, with `fmind read` slugs kept visible."""
     blocks: list[RenderableType] = []
     for post in posts:
@@ -223,7 +224,7 @@ def articles(posts: list[dict[str, Any]], *, footer: str = "") -> RenderableType
     return Group(*blocks, Text(footer)) if footer else Group(*blocks)
 
 
-def tags(doc: dict[str, Any]) -> RenderableType:
+def tags(doc: Mapping[str, Any]) -> RenderableType:
     """The site's article tags, each with its article count and the search that lists them."""
     blocks: list[RenderableType] = []
     for tag in doc["tags"]:
@@ -236,7 +237,7 @@ def tags(doc: dict[str, Any]) -> RenderableType:
     return _listing(blocks, "no tag published")
 
 
-def news(editions: list[dict[str, Any]], *, footer: str = "") -> RenderableType:
+def news(editions: Sequence[Mapping[str, Any]], *, footer: str = "") -> RenderableType:
     """Daily news editions, each with its curated links."""
     blocks: list[RenderableType] = []
     for edition in editions:
@@ -256,10 +257,12 @@ def article_body(markdown: str) -> RenderableType:
     The source already opens with the title, summary, date, reading time, tags and
     canonical URL, so nothing is prepended here.
     """
+    from rich.markdown import Markdown
+
     return Markdown(markdown, code_theme="ansi_light", hyperlinks=False)
 
 
-def papers(doc: dict[str, Any]) -> RenderableType:
+def papers(doc: Mapping[str, Any]) -> RenderableType:
     """The doctorate and the peer-reviewed record behind it."""
     thesis = doc["thesis"]
     thesis_lines: list[RenderableType] = [
@@ -272,7 +275,9 @@ def papers(doc: dict[str, Any]) -> RenderableType:
         row = Text(f"  {link['label']}  ", no_wrap=True, overflow="ignore")
         row.append_text(_link(link["url"]))
         thesis_lines.append(row)
-    parts: list[RenderableType] = [_entry(*thesis_lines), Text("PUBLICATIONS", style=ACCENT), Text()]
+    parts: list[RenderableType] = [_entry(*thesis_lines)]
+    if doc["papers"]:
+        parts += [Text("PUBLICATIONS", style=ACCENT), Text()]
     for paper in doc["papers"]:
         lines: list[RenderableType] = [Text(paper["title"], style="bold"), Text(paper["venue"]), _link(paper["url"])]
         if paper["code"]:
@@ -283,7 +288,7 @@ def papers(doc: dict[str, Any]) -> RenderableType:
     return Group(*parts)
 
 
-def sites(doc: dict[str, Any]) -> RenderableType:
+def sites(doc: Mapping[str, Any]) -> RenderableType:
     """Interactive tools published alongside the writing."""
     blocks = [
         _entry(
@@ -297,7 +302,7 @@ def sites(doc: dict[str, Any]) -> RenderableType:
     return _listing(blocks, "no interactive site published")
 
 
-def hire(doc: dict[str, Any]) -> RenderableType:
+def hire(doc: Mapping[str, Any]) -> RenderableType:
     """What can be booked right now."""
     blocks = [
         _entry(

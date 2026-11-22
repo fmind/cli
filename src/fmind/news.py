@@ -1,5 +1,6 @@
 """Select daily news editions from the news archive: newest, or matching."""
 
+from collections.abc import Sequence
 from typing import Any
 
 type Edition = dict[str, Any]
@@ -15,7 +16,7 @@ def _item_text(item: dict[str, Any]) -> str:
     return " ".join((item["title"], item["domain"], item["description"], item["url"])).lower()
 
 
-def search(editions: list[Edition], query: str, *, limit: int) -> list[Edition]:
+def search(editions: Sequence[Edition], query: str, *, limit: int) -> list[Edition]:
     """Return newest-first editions, keeping only the links that contain every term of `query`.
 
     Terms are ANDed, case-insensitively, against the edition header and each link,
