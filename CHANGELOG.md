@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.0.2] - 2026-11-22
+
+### 🐛 Bug Fixes
+
+- _(api)_ Close HTTP error and rejected-redirect sockets, stop draining redirect bodies into memory, and reject bare carriage returns and DEL/C1 controls in URLs and text
+- _(cli)_ Support `-h` short help, reject empty `read` slugs before fetching, add `--` to dash-prefixed search hints, show truncation counts past 10 ambiguous slugs, handle `SIGINT` cleanly during pager close and exit, treat any `cat` path as unpaged, and cut startup latency with lazy imports
+- _(render)_ Replace `Padding` in `about`, show an empty message when no biography is published, omit `PUBLICATIONS` when no papers are published, and guard whitespace in clickable terminal links
+- _(mcp)_ Strip upstream cache hints with `model_copy` without re-serializing non-cacheable results
+
+### 🧹 Miscellaneous
+
+- _(deps)_ Upgrade locked Python dependencies (`typer 0.29.2`, `httpx2 2.16.2`, `pydantic 2.14.4`), ship PEP 561 typing metadata (`py.typed`), and align pinned tools and CI workflows
+
 ## [3.0.1] - 2026-11-15
 
 ### 🧹 Miscellaneous
