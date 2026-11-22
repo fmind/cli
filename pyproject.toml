@@ -53,10 +53,6 @@ dev = [
 requires = ["uv_build>=0.13.9,<0.14"]
 build-backend = "uv_build"
 
-[tool.uv.build-backend]
-module-name = "fmind"
-module-root = "src"
-
 [tool.ruff]
 line-length = 120
 extend-exclude = ["*.md"] # dprint owns Markdown, including its Python blocks
@@ -116,6 +112,8 @@ known_first_party = ["fmind"]
 
 [tool.ty.rules]
 blanket-ignore-comment = "error"
+unused-ignore-comment = "error"
+unused-type-ignore-comment = "error"
 
 [tool.pytest]
 testpaths = ["tests"]
@@ -127,6 +125,7 @@ timeout = "60"
 
 [tool.coverage.run]
 branch = true
+patch = ["subprocess"]
 source = ["fmind"]
 
 [tool.coverage.report]

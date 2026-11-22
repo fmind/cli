@@ -31,6 +31,14 @@ jobs:
         uses: ./.github/actions/setup-mise
       - name: Run canonical gate
         run: mise run all
+      - name: Smoke-test base wheel without mcp extra
+        run: |
+          uv run --isolated --no-project --with dist/*.whl fmind --version
+          uv run --isolated --no-project --with dist/*.whl fmind --help >/dev/null
+          if uv run --isolated --no-project --with dist/*.whl fmind mcp >/dev/null 2>&1; then
+            echo "Expected fmind mcp to fail without the optional mcp extra" >&2
+            exit 1
+          fi
       - name: Verify no changes
         run: |
           status="$(git status --porcelain)"

@@ -5,6 +5,7 @@
 min_version = "2026.11.12"
 
 [settings]
+locked = true
 lockfile = true
 lockfile_platforms = ["linux-arm64", "linux-x64", "macos-arm64"]
 minimum_release_age = "0d"
@@ -13,6 +14,9 @@ minimum_release_age = "0d"
 run_auto_install = false
 # Preserve child output; MISE_TASK_QUIET=false restores execution messages.
 quiet = true
+
+[task_config]
+dir = "{{config_root}}"
 
 [tools]
 "aqua:astral-sh/uv" = "0.13.9"
@@ -42,7 +46,7 @@ depends = ["check:local", "check:network"]
 
 [tasks."check:local"]
 description = "Run the static checks that need no network (pre-commit)"
-depends = ["check:actions", "check:deps", "check:format", "check:leaks", "check:lint", "check:types"]
+depends = ["check:actions", "check:deps", "check:format", "check:leaks", "check:lint", "check:tasks", "check:types"]
 
 [tasks."check:network"]
 description = "Run the checks that download vulnerability data (pre-push)"
@@ -87,6 +91,10 @@ alias = "cl"
 description = "Lint Python sources and tests (ruff)"
 run = "uv run --locked --extra mcp ruff check src tests"
 
+[tasks."check:tasks"]
+description = "Validate the mise task graph and Lefthook configuration"
+run = ["mise tasks validate", "lefthook validate"]
+
 [tasks."check:types"]
 alias = "ct"
 description = "Type-check Python sources and tests (ty)"
@@ -100,7 +108,7 @@ run = "uv audit --preview-features audit-command --locked"
 [tasks.clean]
 alias = "n"
 description = "Remove build artifacts, caches, and coverage files"
-run = "rm -rf .cache .pytest_cache .ruff_cache .ty_cache .coverage .coverage.* htmlcov build dist"
+run = "rm -rf .pytest_cache .ruff_cache .ty_cache .coverage .coverage.* dist"
 
 [tasks.format]
 alias = "f"
@@ -142,6 +150,7 @@ run = "uv run --locked --extra mcp python -m tests.smoke"
 [tasks.test]
 alias = "t"
 description = "Run the offline pytest suite with branch coverage"
+env.TZ = "UTC"
 # Positive fail_under in pyproject.toml preserves the total and coverage gate.
 run = "uv run --locked --extra mcp pytest -q --cov --cov-report="
 
