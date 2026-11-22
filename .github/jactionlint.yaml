@@ -1,5 +1,7 @@
 # Docs: https://jactionlint.jdx.dev/config
-profile: default
 rules:
-  # Dependabot runs security updates only, which ignore cooldowns; version updates are off.
-  dependabot-cooldown: off
+  # No release-age cooldown, as for mise tools: pins move on release day, and online audits fail on warnings.
+  action-release-cooldown: off
+  # dependabot.yml sets open-pull-requests-limit: 0 for security-updates-only mode;
+  # upgrade-tools owns routine version bumps.
+  dependabot-missing-actions-update: off

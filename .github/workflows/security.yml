@@ -1,21 +1,24 @@
 # Docs: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 name: Security
-# CI scans only the latest commits, so a secret committed earlier and later removed
-# would never be seen again. This is the full-history counterpart: same pinned
-# scanner, whole history, no report to parse — a finding fails the job.
+# Push CI scans only the working tree, so a secret committed earlier and later
+# removed would never be seen again. This is the full-history counterpart: same
+# pinned scanners, whole history, no report to parse — a finding fails the job.
 on:
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 concurrency:
   group: security-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   scan:
     name: Full-history and dependency scan
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Checkout complete history
@@ -24,12 +27,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false # the scanner only reads the checkout
       - name: Set up security scanners
+        # jactionlint ignore=self-repository
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:astral-sh/uv betterleaks
+          tools: aqua:astral-sh/uv betterleaks jactionlint shellcheck
       - name: Scan complete Git history
         run: mise run check:leaks:full
       - name: Audit locked dependencies
-        # Each scan is independent: a failed secret scan must not skip the vulnerability audit.
+        # Each scan is independent: a failed scan must not skip the remaining checks.
         if: ${{ !cancelled() }}
-        run: mise run check:vuln
+        run: mise run check:network
+      - name: Audit workflows online
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: mise run check:actions:online

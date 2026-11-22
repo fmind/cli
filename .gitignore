@@ -1,8 +1,24 @@
 # Docs: https://git-scm.com/docs/gitignore
+
+# Local agent scratch and host state; shared skills stay versioned.
+.agents/prompts/
+.agents/tmp/
+.claude/*
+!.claude/skills
+.gemini/
+
 *.py[cod]
-.coverage
+.cache/
+.coverage*
+.env*
+!.env.example
 .pytest_cache/
 .ruff_cache/
+.ty_cache/
 .venv/
 __pycache__/
+build/
 dist/
+htmlcov/
+mutants/
+tmp/

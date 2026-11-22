@@ -1,0 +1,16 @@
+# Docs: https://github.com/betterleaks/betterleaks/blob/v1.x/docs/config.md
+title = "fmind-cli"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Skip local virtualenvs, bytecode caches, and build outputs when scanning the working tree."
+paths = [
+  '''^\.venv/''',
+  '''^\.pytest_cache/''',
+  '''^\.ruff_cache/''',
+  '''^\.ty_cache/''',
+  '''^dist/''',
+  '''(?:^|/)__pycache__/''',
+]

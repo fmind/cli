@@ -8,23 +8,26 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 concurrency:
   # A literal prefix: when CD calls this workflow, github.workflow names the caller,
   # and sharing its group would cancel or block the release run.
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 jobs:
   gate:
     name: Canonical gate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 100 # check:leaks scans the last 100 commits; a shallower clone hides them
           persist-credentials: false # no step pushes back to the repository
       - name: Set up mise tools
+        # jactionlint ignore=self-repository
         uses: ./.github/actions/setup-mise
       - name: Run canonical gate
         run: mise run all
@@ -35,7 +38,7 @@ jobs:
           test -z "$status"
   compat:
     name: Python ${{ matrix.python }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -48,6 +51,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up uv
+        # jactionlint ignore=self-repository
         uses: ./.github/actions/setup-mise
         with:
           tools: aqua:astral-sh/uv
@@ -59,7 +63,7 @@ jobs:
         run: uv run --locked --all-groups --all-extras --python "$PYTHON_VERSION" pytest
   lowest:
     name: Lowest direct dependencies
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout repository
@@ -67,6 +71,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up uv
+        # jactionlint ignore=self-repository
         uses: ./.github/actions/setup-mise
         with:
           tools: aqua:astral-sh/uv

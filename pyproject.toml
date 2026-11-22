@@ -38,14 +38,19 @@ mcp = [
 
 [dependency-groups]
 dev = [
-  "pytest>=8.3",
-  "pytest-cov>=6.0",
-  "ruff>=0.9",
-  "ty>=0.0.101,<0.1",
+  "deptry>=0.25.1",
+  "markdown-it-py>=4.0",
+  "pytest>=9.2.0",
+  "pytest-cov>=7.1.0",
+  "pytest-socket>=0.8.1",
+  "pytest-timeout>=2.4.0",
+  "ruff>=0.17.5",
+  "ty>=0.0.107,<0.1",
+  "validate-pyproject>=0.27",
 ]
 
 [build-system]
-requires = ["uv_build>=0.13.0,<0.14"]
+requires = ["uv_build>=0.13.9,<0.14"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
@@ -54,13 +59,21 @@ module-root = "src"
 
 [tool.ruff]
 line-length = 120
-extend-exclude = ["*.md"]
+extend-exclude = ["*.md"] # dprint owns Markdown, including its Python blocks
+
+[tool.ruff.format]
+docstring-code-format = true
+line-ending = "lf"
+
 [tool.ruff.lint]
 select = [
   "A",
+  "ARG",
   "ASYNC",
   "B",
+  "BLE",
   "C4",
+  "DTZ",
   "E",
   "ERA",
   "F",
@@ -72,6 +85,8 @@ select = [
   "PERF",
   "PGH",
   "PIE",
+  "PLE",
+  "PLW",
   "PT",
   "PTH",
   "Q",
@@ -87,24 +102,36 @@ select = [
   "UP",
   "W",
 ]
+
 [tool.ruff.lint.flake8-tidy-imports]
 # Portfolio commands run without the optional `mcp` extra; only the bridge loads it.
 banned-module-level-imports = ["fmind.mcp", "httpx2", "mcp", "mcp_types"]
+
 [tool.ruff.lint.per-file-ignores]
 "src/fmind/mcp.py" = ["TID253"] # the bridge is the extra's only importer
 "tests/**" = ["S101", "SLF001", "T201", "TID253"] # tests assert, inspect layer internals, and install every extra
-[tool.ruff.format]
-docstring-code-format = true
-line-ending = "lf"
+
+[tool.deptry]
+known_first_party = ["fmind"]
 
 [tool.ty.rules]
 blanket-ignore-comment = "error"
 
-[tool.pytest.ini_options]
-addopts = "-ra --strict-config --strict-markers --cov=fmind --cov-branch --cov-fail-under=85"
+[tool.pytest]
 testpaths = ["tests"]
+# Offline by default: tests reach only loopback and Unix sockets.
+addopts = ["-ra", "--allow-hosts=127.0.0.1,::1", "--allow-unix-socket"]
 filterwarnings = ["error"]
-xfail_strict = true
+strict = true
+timeout = "60"
+
+[tool.coverage.run]
+branch = true
+source = ["fmind"]
 
 [tool.coverage.report]
-exclude_also = ["if __name__ == .__main__.:", "raise NotImplementedError"]
+fail_under = 85
+show_missing = true
+skip_covered = true
+skip_empty = true
+exclude_also = ["if __name__ == .__main__.:"]

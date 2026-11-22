@@ -12,15 +12,15 @@ runs:
   using: composite
   steps:
     - name: Install mise and locked tools
-      uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
       with:
-        version: 2026.11.6 # pinned mise; bump deliberately with mise.lock tooling
+        version: 2026.11.12 # pinned mise; bump deliberately with mise.lock tooling
         # Fail on a tool that mise.lock does not pin instead of resolving it live.
         install_args: --locked ${{ inputs.tools }}
         cache: ${{ inputs.cache }}
-        # Only the full install (the CI gate) writes the cache, so a partial tool
-        # set never replaces the complete one the other jobs read.
-        cache_save: ${{ inputs.tools == '' }}
+        # Only the full cached install (the CI gate) writes the cache, so a partial tool
+        # set or uncached release job never replaces the shared cache.
+        cache_save: ${{ inputs.cache == 'true' && inputs.tools == '' }}
         # Key tools on the lockfile only: task edits in mise.toml must not force fresh
         # GitHub downloads (a 2026-11-08 release-asset outage blocked runs that way).
         cache_key: "{{cache_key_prefix}}-{{platform}}-{{version}}-p{{cache_period}}-${{ hashFiles('mise.lock') }}"
